@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bun init:*)",
+      "Bash(bun x tsc:*)",
+      "Bash(bun test:*)",
+      "Bash(SHARD_COUNT=4 DATA_DIR=./test-data bun test:*)",
+      "WebSearch",
+      "WebFetch(domain:bun.sh)",
+      "WebFetch(domain:github.com)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
