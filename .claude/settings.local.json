@@ -7,7 +7,9 @@
       "Bash(SHARD_COUNT=4 DATA_DIR=./test-data bun test:*)",
       "WebSearch",
       "WebFetch(domain:bun.sh)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(go mod tidy:*)",
+      "Bash(go test:*)"
     ],
     "deny": [],
     "ask": []

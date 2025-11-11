@@ -11,6 +11,7 @@ import type {
 } from "./storage.ts";
 import { TransactionCancelledError } from "./storage.ts";
 import * as fs from "fs/promises";
+import CRC32 from "crc-32";
 
 export class DB {
   storage: StorageBackend;
@@ -37,13 +38,17 @@ export class DB {
     const target = req.headers.get("x-amz-target");
 
     if (!target) {
-      return new Response(
-        JSON.stringify({ __type: "MissingAuthenticationTokenException" }),
-        {
-          status: 400,
-          headers: { "Content-Type": "application/x-amz-json-1.0" },
-        }
-      );
+      const body = JSON.stringify({
+        __type: "MissingAuthenticationTokenException",
+      });
+      const checksum = CRC32.str(body) >>> 0; // Convert to unsigned 32-bit
+      return new Response(body, {
+        status: 400,
+        headers: {
+          "Content-Type": "application/x-amz-json-1.0",
+          "X-Amz-Crc32": String(checksum),
+        },
+      });
     }
 
     const operation = target.split(".")[1];
@@ -96,27 +101,41 @@ export class DB {
           response = await this.handleTransactGetItems(body);
           break;
         default:
-          return new Response(
-            JSON.stringify({ __type: "UnknownOperationException" }),
-            {
-              status: 400,
-              headers: { "Content-Type": "application/x-amz-json-1.0" },
-            }
-          );
+          const errorBody = JSON.stringify({
+            __type: "UnknownOperationException",
+          });
+          const errorChecksum = CRC32.str(errorBody) >>> 0; // Convert to unsigned 32-bit
+          return new Response(errorBody, {
+            status: 400,
+            headers: {
+              "Content-Type": "application/x-amz-json-1.0",
+              "X-Amz-Crc32": String(errorChecksum),
+            },
+          });
       }
 
-      return new Response(JSON.stringify(response), {
+      const responseBody = JSON.stringify(response);
+      const responseChecksum = CRC32.str(responseBody) >>> 0; // Convert to unsigned 32-bit
+      return new Response(responseBody, {
         status: 200,
-        headers: { "Content-Type": "application/x-amz-json-1.0" },
+        headers: {
+          "Content-Type": "application/x-amz-json-1.0",
+          "X-Amz-Crc32": String(responseChecksum),
+        },
       });
     } catch (error: any) {
-      return new Response(
-        JSON.stringify({ __type: error.name, message: error.message }),
-        {
-          status: 400,
-          headers: { "Content-Type": "application/x-amz-json-1.0" },
-        }
-      );
+      const catchBody = JSON.stringify({
+        __type: error.name,
+        message: error.message,
+      });
+      const catchChecksum = CRC32.str(catchBody) >>> 0; // Convert to unsigned 32-bit
+      return new Response(catchBody, {
+        status: 400,
+        headers: {
+          "Content-Type": "application/x-amz-json-1.0",
+          "X-Amz-Crc32": String(catchChecksum),
+        },
+      });
     }
   }
 
@@ -669,4 +688,15 @@ function extractKey(table: TableSchema, item: DynamoDBItem): any {
     key[attrName] = item[attrName];
   }
   return key;
+}
+
+// Start server if run directly
+if (import.meta.main) {
+  const db = new DB();
+  console.log(
+    `DynamoDB-compatible server running at http://localhost:${db.config.port}`
+  );
+  console.log(
+    `Using sharded SQLite storage with ${db.config.shardCount} shards`
+  );
 }

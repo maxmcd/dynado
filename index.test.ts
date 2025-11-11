@@ -22,6 +22,7 @@ import {
   BatchWriteItemCommand,
 } from "@aws-sdk/client-dynamodb";
 import { DB } from "./index.ts";
+import CRC32 from "crc-32";
 
 // Test helpers
 let tableCounter = 0;
@@ -428,5 +429,30 @@ describe("DynamoDB Implementation", () => {
     );
 
     expect(deleteResponse.TableDescription?.TableName).toBe(tableName);
+  });
+
+  test("should include valid X-Amz-Crc32 header in responses", async () => {
+    // Make a raw HTTP request to check headers
+    const response = await fetch("http://localhost:8000/", {
+      method: "POST",
+      headers: {
+        "x-amz-target": "DynamoDB_20120810.ListTables",
+        "Content-Type": "application/x-amz-json-1.0",
+      },
+      body: JSON.stringify({}),
+    });
+
+    const checksumHeader = response.headers.get("X-Amz-Crc32");
+    expect(checksumHeader).toBeDefined();
+    expect(checksumHeader).not.toBe("");
+
+    // Get the response body
+    const responseBody = await response.text();
+
+    // Compute the CRC32 checksum of the response body
+    const computedChecksum = CRC32.str(responseBody) >>> 0; // Convert to unsigned 32-bit
+
+    // Verify the checksum in the header matches the computed checksum
+    expect(checksumHeader).toBe(String(computedChecksum));
   });
 });
