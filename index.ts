@@ -1,6 +1,6 @@
 // DynamoDB-compatible server with sharded SQLite storage
 
-import { getConfig } from "./config.ts";
+import { getConfigFromEnv } from "./config.ts";
 import { ShardedSQLiteStorage } from "./storage-sqlite.ts";
 import type {
   StorageBackend,
@@ -16,10 +16,10 @@ import CRC32 from "crc-32";
 export class DB {
   storage: StorageBackend;
   server: Bun.Server<undefined>;
-  config: ReturnType<typeof getConfig>;
+  config: ReturnType<typeof getConfigFromEnv>;
 
   constructor() {
-    this.config = getConfig();
+    this.config = getConfigFromEnv();
     this.storage = new ShardedSQLiteStorage({
       shardCount: this.config.shardCount,
       dataDir: this.config.dataDir,
