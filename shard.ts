@@ -313,6 +313,126 @@ export class Shard {
     this.db.run("DELETE FROM items WHERE table_name = ?", [tableName]);
   }
 
+  async query(
+    tableName: string,
+    partitionKeyValue: string,
+    sortKeyCondition?: import("./types.ts").SortKeyCondition,
+    limit?: number,
+    scanIndexForward: boolean = true,
+    exclusiveStartKey?: { partitionKeyValue: string; sortKeyValue: string }
+  ): Promise<{
+    items: DynamoDBItem[];
+    lastEvaluatedKey?: { partitionKeyValue: string; sortKeyValue: string };
+    count: number;
+    scannedCount: number;
+  }> {
+    // Build SQL query based on sort key condition
+    let sql = `SELECT item_data, sort_key FROM items WHERE table_name = ? AND partition_key = ?`;
+    const params: any[] = [tableName, partitionKeyValue];
+
+    // Add sort key condition if provided
+    if (sortKeyCondition) {
+      switch (sortKeyCondition.operator) {
+        case "=":
+          sql += ` AND sort_key = ?`;
+          params.push(JSON.stringify(sortKeyCondition.value));
+          break;
+        case "<":
+          sql += ` AND sort_key < ?`;
+          params.push(JSON.stringify(sortKeyCondition.value));
+          break;
+        case ">":
+          sql += ` AND sort_key > ?`;
+          params.push(JSON.stringify(sortKeyCondition.value));
+          break;
+        case "<=":
+          sql += ` AND sort_key <= ?`;
+          params.push(JSON.stringify(sortKeyCondition.value));
+          break;
+        case ">=":
+          sql += ` AND sort_key >= ?`;
+          params.push(JSON.stringify(sortKeyCondition.value));
+          break;
+        case "BETWEEN":
+          sql += ` AND sort_key BETWEEN ? AND ?`;
+          params.push(JSON.stringify(sortKeyCondition.value));
+          params.push(JSON.stringify(sortKeyCondition.value2));
+          break;
+        case "begins_with":
+          // For begins_with, we use LIKE with the value as prefix
+          // Since sort keys are JSON.stringify'd, we need to match the stringified version
+          // For example, {S: "PROD"} becomes {"S":"PROD"}
+          // We want to match any sort key where the inner string value starts with "PROD"
+          const valueStr = JSON.stringify(sortKeyCondition.value);
+          // Parse the value to get the actual string content
+          // For {S: "PROD"}, we want to extract "PROD" and create pattern {"S":"PROD%
+          const valueObj = sortKeyCondition.value;
+          if (valueObj.S !== undefined) {
+            // String type - extract the string value
+            const prefix = valueObj.S;
+            // Build pattern: {"S":"PREFIX% to match {"S":"PREFIX-001"}, etc.
+            const likePattern = `{"S":"${prefix}%`;
+            sql += ` AND sort_key LIKE ?`;
+            params.push(likePattern);
+          } else {
+            // Fallback for other types
+            const likePattern = valueStr.slice(0, -1) + '%';
+            sql += ` AND sort_key LIKE ?`;
+            params.push(likePattern);
+          }
+          break;
+      }
+    }
+
+    // Handle pagination with exclusiveStartKey
+    if (exclusiveStartKey) {
+      sql += ` AND sort_key > ?`;
+      params.push(exclusiveStartKey.sortKeyValue);
+    }
+
+    // Add sort order
+    sql += ` ORDER BY sort_key ${scanIndexForward ? "ASC" : "DESC"}`;
+
+    // Add limit (fetch one extra to determine if there are more results)
+    const fetchLimit = limit ? limit + 1 : undefined;
+    if (fetchLimit) {
+      sql += ` LIMIT ?`;
+      params.push(fetchLimit);
+    }
+
+    // Execute query
+    const results = this.db.query(sql).all(...params) as any[];
+
+    // Parse results
+    const items: DynamoDBItem[] = [];
+    let hasMore = false;
+
+    for (let i = 0; i < results.length; i++) {
+      if (limit && i >= limit) {
+        hasMore = true;
+        break;
+      }
+      items.push(JSON.parse(results[i].item_data));
+    }
+
+    // Determine last evaluated key for pagination
+    let lastEvaluatedKey: { partitionKeyValue: string; sortKeyValue: string } | undefined;
+    if (hasMore && items.length > 0) {
+      const lastItem = results[limit! - 1];
+      lastEvaluatedKey = {
+        partitionKeyValue,
+        sortKeyValue: lastItem.sort_key,
+      };
+    }
+
+    return {
+      items,
+      lastEvaluatedKey,
+      count: items.length,
+      scannedCount: items.length,
+    };
+  }
+
   // Helper methods
 
   private getKeyString(key: any): string {

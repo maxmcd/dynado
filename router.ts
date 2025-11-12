@@ -172,6 +172,29 @@ export class Router {
     };
   }
 
+  // New query method with range key support
+  async queryWithRangeKey(
+    request: import("./types.ts").QueryRequest
+  ): Promise<import("./types.ts").QueryResponse> {
+    // Route to the appropriate shard based on partition key
+    const shardIndex = this.getShardIndex(request.partitionKeyValue);
+    const shard = this.shards[shardIndex];
+
+    if (!shard) {
+      throw new Error(`Shard ${shardIndex} not found`);
+    }
+
+    // Execute query on the shard
+    return await shard.query(
+      request.tableName,
+      request.partitionKeyValue,
+      request.sortKeyCondition,
+      request.limit,
+      request.scanIndexForward ?? true,
+      request.exclusiveStartKey
+    );
+  }
+
   // Batch operations
 
   async batchGet(

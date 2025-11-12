@@ -146,3 +146,42 @@ export interface ShardTarget {
   shardIndex: number;
   shardId: string;
 }
+
+// Range query support
+
+export type SortKeyConditionOperator =
+  | "="
+  | "<"
+  | ">"
+  | "<="
+  | ">="
+  | "BETWEEN"
+  | "begins_with";
+
+export interface SortKeyCondition {
+  operator: SortKeyConditionOperator;
+  value: any; // Single value for =, <, >, <=, >=, begins_with
+  value2?: any; // Second value for BETWEEN
+}
+
+export interface QueryRequest {
+  tableName: string;
+  partitionKeyValue: string; // Required: must specify partition key
+  sortKeyCondition?: SortKeyCondition; // Optional: filter on sort key
+  limit?: number;
+  scanIndexForward?: boolean; // true = ascending (default), false = descending
+  exclusiveStartKey?: {
+    partitionKeyValue: string;
+    sortKeyValue: string;
+  };
+}
+
+export interface QueryResponse {
+  items: DynamoDBItem[];
+  lastEvaluatedKey?: {
+    partitionKeyValue: string;
+    sortKeyValue: string;
+  };
+  count: number;
+  scannedCount: number;
+}
