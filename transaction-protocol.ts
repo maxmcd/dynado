@@ -11,9 +11,18 @@ export function generateTransactionId(): string {
   return `tx_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
 }
 
-// Generate timestamp for transaction ordering
+// Monotonic timestamp generator for transaction ordering
+let lastTimestamp = 0;
+
 export function generateTransactionTimestamp(): number {
-  return Date.now();
+  const now = Date.now();
+  // Ensure timestamp is always increasing
+  if (now <= lastTimestamp) {
+    lastTimestamp++;
+    return lastTimestamp;
+  }
+  lastTimestamp = now;
+  return now;
 }
 
 // Convert TransactWriteItem to PrepareRequest format

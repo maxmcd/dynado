@@ -10,6 +10,29 @@ export function evaluateConditionExpression(
 ): boolean {
   if (!conditionExpression) return true;
 
+  // Trim whitespace
+  conditionExpression = conditionExpression.trim();
+
+  // Strip outer parentheses if present
+  while (conditionExpression.startsWith("(") && conditionExpression.endsWith(")")) {
+    // Check if these parentheses match (not part of a nested structure)
+    let depth = 0;
+    let matchesOuter = true;
+    for (let i = 0; i < conditionExpression.length - 1; i++) {
+      if (conditionExpression[i] === "(") depth++;
+      if (conditionExpression[i] === ")") depth--;
+      if (depth === 0) {
+        matchesOuter = false;
+        break;
+      }
+    }
+    if (matchesOuter) {
+      conditionExpression = conditionExpression.substring(1, conditionExpression.length - 1).trim();
+    } else {
+      break;
+    }
+  }
+
   // Resolve attribute names and values
   const resolveAttributeName = (name: string): string => {
     if (expressionAttributeNames && name.startsWith("#")) {
@@ -33,16 +56,26 @@ export function evaluateConditionExpression(
   // Handle logical operators (AND, OR, NOT)
   if (conditionExpression.includes(" AND ")) {
     const parts = splitByLogicalOperator(conditionExpression, " AND ");
-    return parts.every(part =>
-      evaluateConditionExpression(item, part.trim(), expressionAttributeNames, expressionAttributeValues)
-    );
+    // Prevent infinite recursion - if split didn't work, don't recurse
+    if (parts.length === 1 && parts[0] === conditionExpression) {
+      // Fall through to other handlers
+    } else {
+      return parts.every(part =>
+        evaluateConditionExpression(item, part.trim(), expressionAttributeNames, expressionAttributeValues)
+      );
+    }
   }
 
   if (conditionExpression.includes(" OR ")) {
     const parts = splitByLogicalOperator(conditionExpression, " OR ");
-    return parts.some(part =>
-      evaluateConditionExpression(item, part.trim(), expressionAttributeNames, expressionAttributeValues)
-    );
+    // Prevent infinite recursion - if split didn't work, don't recurse
+    if (parts.length === 1 && parts[0] === conditionExpression) {
+      // Fall through to other handlers
+    } else {
+      return parts.some(part =>
+        evaluateConditionExpression(item, part.trim(), expressionAttributeNames, expressionAttributeValues)
+      );
+    }
   }
 
   if (conditionExpression.trim().startsWith("NOT ")) {
@@ -173,9 +206,8 @@ export function evaluateConditionExpression(
     return false;
   }
 
-  // Default: condition passes (for unsupported expressions)
-  console.warn(`Unsupported condition expression: ${conditionExpression}`);
-  return true;
+  // Default: condition fails for unsupported expressions to prevent security bypass
+  throw new Error(`Unsupported condition expression: ${conditionExpression}`);
 }
 
 function splitByLogicalOperator(expression: string, operator: string): string[] {

@@ -5,6 +5,7 @@ import type { DynamoDBItem, TransactWriteItem, TransactGetItem } from "./types.t
 import type { Shard } from "./shard.ts";
 import type { MetadataStore } from "./metadata-store.ts";
 import type { TransactionCoordinator } from "./coordinator.ts";
+import { getShardIndex } from "./hash-utils.ts";
 
 export class Router {
   private shards: Shard[];
@@ -177,7 +178,7 @@ export class Router {
     request: import("./types.ts").QueryRequest
   ): Promise<import("./types.ts").QueryResponse> {
     // Route to the appropriate shard based on partition key
-    const shardIndex = this.getShardIndex(request.partitionKeyValue);
+    const shardIndex = getShardIndex(request.partitionKeyValue, this.shards.length);
     const shard = this.shards[shardIndex];
 
     if (!shard) {
@@ -334,7 +335,7 @@ export class Router {
       }
 
       const partitionKey = this.metadataStore.getPartitionKeyValue(tableName, key);
-      const shardIndex = this.getShardIndex(partitionKey);
+      const shardIndex = getShardIndex(partitionKey, this.shards.length);
       shardIndexes.add(shardIndex);
     }
 
@@ -371,7 +372,7 @@ export class Router {
     sortKeyValue: string;
   }> {
     const keyValues = this.metadataStore.extractKeyValues(tableName, item);
-    const shardIndex = this.getShardIndex(keyValues.partitionKeyValue);
+    const shardIndex = getShardIndex(keyValues.partitionKeyValue, this.shards.length);
     const shard = this.shards[shardIndex];
 
     if (!shard) {
@@ -388,16 +389,6 @@ export class Router {
       partitionKeyValue: keyValues.partitionKeyValue,
       sortKeyValue: keyValues.sortKeyValue,
     };
-  }
-
-  private getShardIndex(partitionKey: string): number {
-    // Consistent hashing - same logic as coordinator
-    let hash = 0;
-    for (let i = 0; i < partitionKey.length; i++) {
-      hash = (hash << 5) - hash + partitionKey.charCodeAt(i);
-      hash = hash & hash; // Convert to 32-bit integer
-    }
-    return Math.abs(hash) % this.shards.length;
   }
 
   private getKeyString(key: any): string {

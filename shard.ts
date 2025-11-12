@@ -252,8 +252,11 @@ export class Shard {
 
   async putItem(tableName: string, partitionKey: string, sortKey: string, item: DynamoDBItem) {
     const itemData = JSON.stringify(item);
-    // For non-transactional operations, set timestamp to 0 to avoid conflicts
-    // In production, we'd use a proper timestamp ordering scheme
+    // For non-transactional operations, use timestamp=0
+    // This allows transactional writes (which use monotonically increasing timestamps > 0)
+    // to always succeed over non-transactional writes, ensuring proper 2PC semantics
+    // NOTE: This is a simplification - in production DynamoDB, all writes use timestamps
+    const timestamp = 0;
 
     // Get current LSN for this item (if it exists)
     const currentLsnResult = this.db.query(
@@ -264,8 +267,8 @@ export class Shard {
     this.db.run(
       `INSERT OR REPLACE INTO items
        (table_name, partition_key, sort_key, item_data, ongoing_transaction_id, last_update_timestamp, lsn)
-       VALUES (?, ?, ?, ?, NULL, 0, ?)`,
-      [tableName, partitionKey, sortKey, itemData, newLsn]
+       VALUES (?, ?, ?, ?, NULL, ?, ?)`,
+      [tableName, partitionKey, sortKey, itemData, timestamp, newLsn]
     );
   }
 
@@ -463,13 +466,67 @@ export class Shard {
             const resolved = expressionAttributeNames[left];
             if (resolved) attrName = resolved;
           }
+
+          // Evaluate the right-hand side expression
           let attrValue;
-          if (expressionAttributeValues && right.startsWith(":")) {
+
+          // Check for arithmetic operations (attr + value, attr - value)
+          const addExpr = right.match(/^(\S+)\s*\+\s*(\S+)$/);
+          const subExpr = right.match(/^(\S+)\s*-\s*(\S+)$/);
+
+          if (addExpr && addExpr[1] && addExpr[2]) {
+            // Addition: attr + value
+            const leftOperand = addExpr[1];
+            const rightOperand = addExpr[2];
+
+            let leftVal = 0;
+            if (expressionAttributeNames && leftOperand.startsWith("#")) {
+              const resolvedName = expressionAttributeNames[leftOperand];
+              leftVal = resolvedName && updatedItem[resolvedName]?.N
+                ? parseInt(updatedItem[resolvedName].N)
+                : 0;
+            } else if (leftOperand === attrName) {
+              leftVal = updatedItem[attrName]?.N ? parseInt(updatedItem[attrName].N) : 0;
+            }
+
+            let rightVal = 0;
+            if (expressionAttributeValues && rightOperand.startsWith(":")) {
+              const value = expressionAttributeValues[rightOperand];
+              rightVal = value?.N ? parseInt(value.N) : 0;
+            }
+
+            attrValue = { N: String(leftVal + rightVal) };
+          } else if (subExpr && subExpr[1] && subExpr[2]) {
+            // Subtraction: attr - value
+            const leftOperand = subExpr[1];
+            const rightOperand = subExpr[2];
+
+            let leftVal = 0;
+            if (expressionAttributeNames && leftOperand.startsWith("#")) {
+              const resolvedName = expressionAttributeNames[leftOperand];
+              leftVal = resolvedName && updatedItem[resolvedName]?.N
+                ? parseInt(updatedItem[resolvedName].N)
+                : 0;
+            } else if (leftOperand === attrName) {
+              leftVal = updatedItem[attrName]?.N ? parseInt(updatedItem[attrName].N) : 0;
+            }
+
+            let rightVal = 0;
+            if (expressionAttributeValues && rightOperand.startsWith(":")) {
+              const value = expressionAttributeValues[rightOperand];
+              rightVal = value?.N ? parseInt(value.N) : 0;
+            }
+
+            attrValue = { N: String(leftVal - rightVal) };
+          } else if (expressionAttributeValues && right.startsWith(":")) {
+            // Simple value reference
             attrValue = expressionAttributeValues[right];
           } else {
+            // Literal value
             attrValue = right;
           }
-          if (attrName) {
+
+          if (attrName && attrValue !== undefined) {
             updatedItem[attrName] = attrValue;
           }
         }

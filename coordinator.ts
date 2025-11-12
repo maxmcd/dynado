@@ -21,6 +21,7 @@ import {
 } from "./transaction-protocol.ts";
 import type { Shard } from "./shard.ts";
 import type { MetadataStore } from "./metadata-store.ts";
+import { getShardIndex } from "./hash-utils.ts";
 import * as fs from "fs";
 
 interface IdempotencyCacheEntry {
@@ -231,7 +232,7 @@ export class TransactionCoordinator {
         item.tableName,
         item.key
       );
-      const shardIndex = this.getShardIndex(keyValues.partitionKeyValue, shards.length);
+      const shardIndex = getShardIndex(keyValues.partitionKeyValue, shards.length);
       const shard = shards[shardIndex];
 
       if (!shard) {
@@ -340,7 +341,7 @@ export class TransactionCoordinator {
 
       // Determine which shard this item belongs to
       const partitionKey = metadataStore.getPartitionKeyValue(tableName, key);
-      const shardIndex = this.getShardIndex(partitionKey, shards.length);
+      const shardIndex = getShardIndex(partitionKey, shards.length);
 
       // Extract key values for storage
       const keyValues = metadataStore.extractKeyValuesFromKey(tableName, key);
@@ -408,20 +409,30 @@ export class TransactionCoordinator {
 
       let retries = 0;
       let delay = INITIAL_DELAY;
+      let lastError: Error | undefined;
 
-      while (true) {
+      while (retries < MAX_RETRIES) {
         try {
           await shard.commit(op.commitRequest);
           break; // Success
         } catch (error: any) {
+          lastError = error;
           retries++;
+
           if (retries >= MAX_RETRIES) {
-            // In production, this would be handled by a recovery manager
-            // For now, we log and continue retrying
-            console.error(
-              `Failed to commit on shard ${op.shardIndex} after ${retries} retries:`,
-              error
+            // Transaction is now in an inconsistent state
+            // In production, this would trigger:
+            // 1. Alert to operations team
+            // 2. Record to dead letter queue for manual recovery
+            // 3. Coordinator recovery process would pick this up
+            const err = new Error(
+              `Failed to commit transaction ${transactionId} on shard ${op.shardIndex} after ${MAX_RETRIES} retries. ` +
+              `Transaction is in COMMITTING state and requires manual recovery. ` +
+              `Original error: ${lastError.message}`
             );
+            // Record this failed commit for recovery
+            this.recordFailedCommit(transactionId, op.shardIndex, err);
+            throw err;
           }
 
           // Exponential backoff
@@ -429,6 +440,27 @@ export class TransactionCoordinator {
           delay = Math.min(delay * 2, 5000);
         }
       }
+    }
+  }
+
+  // Record failed commits for recovery (in production, would use separate recovery table)
+  private recordFailedCommit(transactionId: string, shardIndex: number, error: Error): void {
+    // Log for now - in production would write to recovery queue
+    console.error(
+      `CRITICAL: Transaction ${transactionId} failed to commit on shard ${shardIndex}. ` +
+      `This requires manual intervention or automated recovery. Error: ${error.message}`
+    );
+
+    // Update transaction state to indicate partial commit
+    try {
+      this.db.run(
+        `UPDATE transaction_ledger
+         SET state = 'COMMITTING_FAILED', completed_at = ?
+         WHERE transaction_id = ?`,
+        [Date.now(), transactionId]
+      );
+    } catch (dbError) {
+      console.error(`Failed to update transaction ledger for ${transactionId}:`, dbError);
     }
   }
 
@@ -533,17 +565,6 @@ export class TransactionCoordinator {
   }
 
   // Helper methods
-
-  private getShardIndex(partitionKey: string, shardCount: number): number {
-    // Use Web Crypto API for consistent hashing
-    // For now, use a simple hash
-    let hash = 0;
-    for (let i = 0; i < partitionKey.length; i++) {
-      hash = (hash << 5) - hash + partitionKey.charCodeAt(i);
-      hash = hash & hash; // Convert to 32-bit integer
-    }
-    return Math.abs(hash) % shardCount;
-  }
 
   private getKeyString(key: any): string {
     const keyAttrs = Object.keys(key).sort();
