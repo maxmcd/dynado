@@ -11,6 +11,7 @@
     "typescript": "^5"
   },
   "dependencies": {
+    "chevrotain": "^11.0.3",
     "crc-32": "^1.2.2"
   }
 }

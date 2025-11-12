@@ -10,6 +10,7 @@ import type {
   ReleaseRequest,
 } from "./types.ts";
 import { evaluateConditionExpression } from "./condition-expression.ts";
+import { applyUpdateExpressionToItem } from "./expression-parser/index.ts";
 
 export class Shard {
   private db: Database;
@@ -450,133 +451,12 @@ export class Shard {
     expressionAttributeNames?: Record<string, string>,
     expressionAttributeValues?: Record<string, any>
   ): DynamoDBItem {
-    const updatedItem = { ...item };
-
-    // Handle SET operations
-    const setMatch = updateExpression.match(/SET\s+(.+?)(?=\s+REMOVE|\s+ADD|$)/i);
-    if (setMatch && setMatch[1]) {
-      const assignments = setMatch[1].split(",");
-      for (const assignment of assignments) {
-        const parts = assignment.split("=");
-        if (parts.length === 2 && parts[0] && parts[1]) {
-          const left = parts[0].trim();
-          const right = parts[1].trim();
-          let attrName = left;
-          if (expressionAttributeNames && left.startsWith("#")) {
-            const resolved = expressionAttributeNames[left];
-            if (resolved) attrName = resolved;
-          }
-
-          // Evaluate the right-hand side expression
-          let attrValue;
-
-          // Check for arithmetic operations (attr + value, attr - value)
-          const addExpr = right.match(/^(\S+)\s*\+\s*(\S+)$/);
-          const subExpr = right.match(/^(\S+)\s*-\s*(\S+)$/);
-
-          if (addExpr && addExpr[1] && addExpr[2]) {
-            // Addition: attr + value
-            const leftOperand = addExpr[1];
-            const rightOperand = addExpr[2];
-
-            let leftVal = 0;
-            if (expressionAttributeNames && leftOperand.startsWith("#")) {
-              const resolvedName = expressionAttributeNames[leftOperand];
-              leftVal = resolvedName && updatedItem[resolvedName]?.N
-                ? parseInt(updatedItem[resolvedName].N)
-                : 0;
-            } else if (leftOperand === attrName) {
-              leftVal = updatedItem[attrName]?.N ? parseInt(updatedItem[attrName].N) : 0;
-            }
-
-            let rightVal = 0;
-            if (expressionAttributeValues && rightOperand.startsWith(":")) {
-              const value = expressionAttributeValues[rightOperand];
-              rightVal = value?.N ? parseInt(value.N) : 0;
-            }
-
-            attrValue = { N: String(leftVal + rightVal) };
-          } else if (subExpr && subExpr[1] && subExpr[2]) {
-            // Subtraction: attr - value
-            const leftOperand = subExpr[1];
-            const rightOperand = subExpr[2];
-
-            let leftVal = 0;
-            if (expressionAttributeNames && leftOperand.startsWith("#")) {
-              const resolvedName = expressionAttributeNames[leftOperand];
-              leftVal = resolvedName && updatedItem[resolvedName]?.N
-                ? parseInt(updatedItem[resolvedName].N)
-                : 0;
-            } else if (leftOperand === attrName) {
-              leftVal = updatedItem[attrName]?.N ? parseInt(updatedItem[attrName].N) : 0;
-            }
-
-            let rightVal = 0;
-            if (expressionAttributeValues && rightOperand.startsWith(":")) {
-              const value = expressionAttributeValues[rightOperand];
-              rightVal = value?.N ? parseInt(value.N) : 0;
-            }
-
-            attrValue = { N: String(leftVal - rightVal) };
-          } else if (expressionAttributeValues && right.startsWith(":")) {
-            // Simple value reference
-            attrValue = expressionAttributeValues[right];
-          } else {
-            // Literal value
-            attrValue = right;
-          }
-
-          if (attrName && attrValue !== undefined) {
-            updatedItem[attrName] = attrValue;
-          }
-        }
-      }
-    }
-
-    // Handle REMOVE operations
-    const removeMatch = updateExpression.match(
-      /REMOVE\s+(.+?)(?=\s+SET|\s+ADD|$)/i
+    return applyUpdateExpressionToItem(
+      item,
+      updateExpression,
+      expressionAttributeNames,
+      expressionAttributeValues
     );
-    if (removeMatch && removeMatch[1]) {
-      const attrs = removeMatch[1].split(",").map((s: string) => s.trim());
-      for (const attr of attrs) {
-        let attrName = attr;
-        if (expressionAttributeNames && attr.startsWith("#")) {
-          const resolved = expressionAttributeNames[attr];
-          if (resolved) attrName = resolved;
-        }
-        if (attrName) {
-          delete updatedItem[attrName];
-        }
-      }
-    }
-
-    // Handle ADD operations (for numbers)
-    const addMatch = updateExpression.match(/ADD\s+(.+?)(?=\s+SET|\s+REMOVE|$)/i);
-    if (addMatch && addMatch[1]) {
-      const parts = addMatch[1].trim().split(/\s+/);
-      if (parts.length >= 2 && parts[0] && parts[1]) {
-        const left = parts[0];
-        const right = parts[1];
-        let attrName = left;
-        if (expressionAttributeNames && left.startsWith("#")) {
-          const resolved = expressionAttributeNames[left];
-          if (resolved) attrName = resolved;
-        }
-        let addValue;
-        if (expressionAttributeValues && right.startsWith(":")) {
-          addValue = expressionAttributeValues[right];
-        }
-        if (attrName && addValue && addValue.N) {
-          const currentVal = updatedItem[attrName]?.N
-            ? parseInt(updatedItem[attrName].N)
-            : 0;
-          updatedItem[attrName] = { N: String(currentVal + parseInt(addValue.N)) };
-        }
-      }
-    }
-
-    return updatedItem;
   }
 
   close() {
