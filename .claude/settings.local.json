@@ -10,7 +10,8 @@
       "WebFetch(domain:github.com)",
       "Bash(go mod tidy:*)",
       "Bash(go test:*)",
-      "Bash(sqlite3:*)"
+      "Bash(sqlite3:*)",
+      "Bash(TEST_DYNAMODB_LOCAL=true bun test:*)"
     ],
     "deny": [],
     "ask": []

@@ -4,8 +4,9 @@
   "type": "module",
   "private": true,
   "devDependencies": {
+    "@aws-sdk/client-dynamodb": "^3.928.0",
     "@types/bun": "latest",
-    "@aws-sdk/client-dynamodb": "^3.928.0"
+    "testcontainers": "^11.8.1"
   },
   "peerDependencies": {
     "typescript": "^5"

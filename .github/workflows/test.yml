@@ -17,5 +17,7 @@ jobs:
         run: bun install
       - name: Run Bun tests
         run: bun test
+      - name: Run Bun tests with DynamoDB Local
+        run: TEST_DYNAMODB_LOCAL=true bun test --timeout=60000
       - name: Run Go tests
         run: go test -v ./...

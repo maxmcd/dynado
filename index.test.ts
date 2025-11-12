@@ -23,6 +23,8 @@ import {
 } from "@aws-sdk/client-dynamodb";
 import { DB } from "./index.ts";
 import CRC32 from "crc-32";
+import { startTestDB } from "./test-db-setup.ts";
+import type { TestDBSetup } from "./test-db-setup.ts";
 
 // Test helpers
 let tableCounter = 0;
@@ -93,26 +95,24 @@ async function cleanupTables(client: DynamoDBClient) {
 
 describe("DynamoDB Implementation", () => {
   let client: DynamoDBClient;
-  let db: DB;
+  let testDB: TestDBSetup;
+
   beforeAll(async () => {
-    db = new DB();
-    // Start our DynamoDB server
-    await import("./index.ts");
+    // Conditionally start either dynado or DynamoDB Local
+    testDB = await startTestDB();
 
     client = new DynamoDBClient({
-      endpoint: "http://localhost:8000",
+      endpoint: testDB.endpoint,
       region: "local",
       credentials: {
         accessKeyId: "test",
         secretAccessKey: "test",
       },
     });
-
-    // Give the server a moment to start
-    await new Promise((resolve) => setTimeout(resolve, 100));
   });
+
   afterAll(async () => {
-    await db.deleteAllData();
+    await testDB.cleanup();
   });
 
   afterEach(async () => {
@@ -236,7 +236,8 @@ describe("DynamoDB Implementation", () => {
       new UpdateItemCommand({
         TableName: tableName,
         Key: { id: { S: "item-1" } },
-        UpdateExpression: "ADD counter :inc",
+        UpdateExpression: "ADD #counter :inc",
+        ExpressionAttributeNames: { "#counter": "counter" },
         ExpressionAttributeValues: { ":inc": { N: "3" } },
         ReturnValues: "ALL_NEW",
       })
@@ -254,6 +255,7 @@ describe("DynamoDB Implementation", () => {
       new DeleteItemCommand({
         TableName: tableName,
         Key: { id: { S: "item-1" } },
+        ReturnValues: "ALL_OLD",
       })
     );
 
@@ -432,8 +434,13 @@ describe("DynamoDB Implementation", () => {
   });
 
   test("should include valid X-Amz-Crc32 header in responses", async () => {
+    // Skip this test when testing against DynamoDB Local (it doesn't include this header)
+    if (process.env.TEST_DYNAMODB_LOCAL === "true") {
+      return;
+    }
+
     // Make a raw HTTP request to check headers
-    const response = await fetch("http://localhost:8000/", {
+    const response = await fetch(testDB.endpoint + "/", {
       method: "POST",
       headers: {
         "x-amz-target": "DynamoDB_20120810.ListTables",
