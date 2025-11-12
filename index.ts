@@ -12,6 +12,7 @@ import type {
 import { TransactionCancelledError } from "./storage.ts";
 import * as fs from "fs/promises";
 import CRC32 from "crc-32";
+import { evaluateKeyCondition } from "./expression-parser/key-condition-evaluator.ts";
 
 export class DB {
   storage: StorageBackend;
@@ -388,6 +389,7 @@ export class DB {
       ExpressionAttributeNames,
       Limit,
       ExclusiveStartKey,
+      ScanIndexForward = true,
     } = body;
 
     const table = await this.storage.describeTable(TableName);
@@ -395,27 +397,18 @@ export class DB {
       throw { name: "ResourceNotFoundException", message: "Table not found" };
     }
 
-    // Build filter function from KeyConditionExpression
+    // Build filter function from KeyConditionExpression using proper parser
     let keyCondition = (item: DynamoDBItem) => true;
 
     if (KeyConditionExpression) {
-      const eqMatch = KeyConditionExpression.match(/([#\w]+)\s*=\s*(:\w+)/);
-      if (eqMatch) {
-        let keyAttr = eqMatch[1];
-        const valueRef = eqMatch[2];
-
-        if (ExpressionAttributeNames && keyAttr.startsWith("#")) {
-          keyAttr = ExpressionAttributeNames[keyAttr];
-        }
-
-        const keyValue = ExpressionAttributeValues?.[valueRef];
-
-        if (keyValue) {
-          keyCondition = (item: any) => {
-            return JSON.stringify(item[keyAttr]) === JSON.stringify(keyValue);
-          };
-        }
-      }
+      keyCondition = (item: DynamoDBItem) => {
+        return evaluateKeyCondition(
+          item,
+          KeyConditionExpression,
+          ExpressionAttributeNames,
+          ExpressionAttributeValues
+        );
+      };
     }
 
     const queryResult = await this.storage.query(
@@ -425,6 +418,30 @@ export class DB {
       ExclusiveStartKey
     );
     let items = queryResult.items;
+
+    // Sort items by sort key based on ScanIndexForward
+    if (table.keySchema.length > 1 && items.length > 0) {
+      const sortKeyName = table.keySchema[1]!.AttributeName;
+      items.sort((a, b) => {
+        const aVal = a[sortKeyName];
+        const bVal = b[sortKeyName];
+
+        // Handle string sort keys
+        if (aVal?.S !== undefined && bVal?.S !== undefined) {
+          const comparison = aVal.S.localeCompare(bVal.S);
+          return ScanIndexForward ? comparison : -comparison;
+        }
+
+        // Handle number sort keys
+        if (aVal?.N !== undefined && bVal?.N !== undefined) {
+          const comparison = parseFloat(aVal.N) - parseFloat(bVal.N);
+          return ScanIndexForward ? comparison : -comparison;
+        }
+
+        return 0;
+      });
+    }
+
     const scannedCount = items.length;
 
     // Apply FilterExpression

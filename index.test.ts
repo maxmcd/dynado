@@ -21,10 +21,8 @@ import {
   BatchGetItemCommand,
   BatchWriteItemCommand,
 } from "@aws-sdk/client-dynamodb";
-import { DB } from "./index.ts";
 import CRC32 from "crc-32";
-import { startTestDB } from "./test-db-setup.ts";
-import type { TestDBSetup } from "./test-db-setup.ts";
+import { getGlobalTestDB } from "./test-global-setup.ts";
 
 // Test helpers
 let tableCounter = 0;
@@ -95,24 +93,13 @@ async function cleanupTables(client: DynamoDBClient) {
 
 describe("DynamoDB Implementation", () => {
   let client: DynamoDBClient;
-  let testDB: TestDBSetup;
+  let endpoint: string;
 
   beforeAll(async () => {
-    // Conditionally start either dynado or DynamoDB Local
-    testDB = await startTestDB();
-
-    client = new DynamoDBClient({
-      endpoint: testDB.endpoint,
-      region: "local",
-      credentials: {
-        accessKeyId: "test",
-        secretAccessKey: "test",
-      },
-    });
-  });
-
-  afterAll(async () => {
-    await testDB.cleanup();
+    // Use global test DB shared across all test files
+    const testDB = await getGlobalTestDB();
+    client = testDB.client;
+    endpoint = testDB.endpoint;
   });
 
   afterEach(async () => {
@@ -440,7 +427,7 @@ describe("DynamoDB Implementation", () => {
     }
 
     // Make a raw HTTP request to check headers
-    const response = await fetch(testDB.endpoint + "/", {
+    const response = await fetch(endpoint + "/", {
       method: "POST",
       headers: {
         "x-amz-target": "DynamoDB_20120810.ListTables",

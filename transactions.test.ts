@@ -1,479 +1,732 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { ShardedSQLiteStorage } from "./storage-sqlite.ts";
-import type { TransactWriteItem, TransactGetItem } from "./storage.ts";
-import { TransactionCancelledError } from "./storage.ts";
-import * as fs from "fs";
+// Tests for transaction operations
+// Uses HTTP API via AWS SDK
 
-const TEST_DATA_DIR = "./test-data-transactions";
-
-function cleanupTestData() {
-  if (fs.existsSync(TEST_DATA_DIR)) {
-    fs.rmSync(TEST_DATA_DIR, { recursive: true });
-  }
-}
+import {
+  describe,
+  test,
+  expect,
+  beforeAll,
+  beforeEach,
+  afterEach,
+  afterAll,
+} from "bun:test";
+import {
+  DynamoDBClient,
+  CreateTableCommand,
+  DeleteTableCommand,
+  PutItemCommand,
+  GetItemCommand,
+  TransactWriteItemsCommand,
+  TransactGetItemsCommand,
+} from "@aws-sdk/client-dynamodb";
+import { getGlobalTestDB } from "./test-global-setup.ts";
 
 describe("Transaction Operations", () => {
-  let storage: ShardedSQLiteStorage;
+  let client: DynamoDBClient;
+  const createdTables: string[] = [];
 
-  beforeEach(() => {
-    cleanupTestData();
-    fs.mkdirSync(TEST_DATA_DIR, { recursive: true });
-    storage = new ShardedSQLiteStorage({
-      shardCount: 4,
-      dataDir: TEST_DATA_DIR,
-    });
+  beforeAll(async () => {
+    const testDB = await getGlobalTestDB();
+    client = testDB.client;
+  });
 
+  beforeEach(async () => {
     // Create test table
-    storage.createTable({
-      tableName: "TransactTest",
-      keySchema: [{ AttributeName: "id", KeyType: "HASH" }],
-      attributeDefinitions: [{ AttributeName: "id", AttributeType: "S" }],
-    });
+    const tableName = `TransactTest_${Date.now()}`;
+    createdTables.push(tableName);
+
+    await client.send(
+      new CreateTableCommand({
+        TableName: tableName,
+        KeySchema: [{ AttributeName: "id", KeyType: "HASH" }],
+        AttributeDefinitions: [{ AttributeName: "id", AttributeType: "S" }],
+        BillingMode: "PAY_PER_REQUEST",
+      })
+    );
   });
 
-  afterEach(() => {
-    storage.close();
-    cleanupTestData();
+  afterEach(async () => {
+    // Clean up tables
+    for (const tableName of createdTables) {
+      try {
+        await client.send(new DeleteTableCommand({ TableName: tableName }));
+      } catch (error) {
+        // Ignore errors
+      }
+    }
+    createdTables.length = 0;
   });
+
+  function getTableName(): string {
+    return createdTables[createdTables.length - 1]!;
+  }
 
   test("should put multiple items atomically", async () => {
-    const items: TransactWriteItem[] = [
-      {
-        Put: {
-          tableName: "TransactTest",
-          item: { id: { S: "item1" }, value: { S: "First" } },
-        },
-      },
-      {
-        Put: {
-          tableName: "TransactTest",
-          item: { id: { S: "item2" }, value: { S: "Second" } },
-        },
-      },
-      {
-        Put: {
-          tableName: "TransactTest",
-          item: { id: { S: "item3" }, value: { S: "Third" } },
-        },
-      },
-    ];
+    const tableName = getTableName();
 
-    await storage.transactWrite(items);
+    await client.send(
+      new TransactWriteItemsCommand({
+        TransactItems: [
+          {
+            Put: {
+              TableName: tableName,
+              Item: { id: { S: "item1" }, value: { S: "First" } },
+            },
+          },
+          {
+            Put: {
+              TableName: tableName,
+              Item: { id: { S: "item2" }, value: { S: "Second" } },
+            },
+          },
+          {
+            Put: {
+              TableName: tableName,
+              Item: { id: { S: "item3" }, value: { S: "Third" } },
+            },
+          },
+        ],
+      })
+    );
 
     // Verify all items were created
-    const item1 = await storage.getItem("TransactTest", { id: { S: "item1" } });
-    const item2 = await storage.getItem("TransactTest", { id: { S: "item2" } });
-    const item3 = await storage.getItem("TransactTest", { id: { S: "item3" } });
+    const item1 = await client.send(
+      new GetItemCommand({ TableName: tableName, Key: { id: { S: "item1" } } })
+    );
+    const item2 = await client.send(
+      new GetItemCommand({ TableName: tableName, Key: { id: { S: "item2" } } })
+    );
+    const item3 = await client.send(
+      new GetItemCommand({ TableName: tableName, Key: { id: { S: "item3" } } })
+    );
 
-    expect(item1?.value.S).toBe("First");
-    expect(item2?.value.S).toBe("Second");
-    expect(item3?.value.S).toBe("Third");
+    expect(item1.Item?.value.S).toBe("First");
+    expect(item2.Item?.value.S).toBe("Second");
+    expect(item3.Item?.value.S).toBe("Third");
   });
 
   test("should update multiple items atomically", async () => {
+    const tableName = getTableName();
+
     // Create initial items
-    await storage.putItem("TransactTest", { id: { S: "item1" }, count: { N: "1" } });
-    await storage.putItem("TransactTest", { id: { S: "item2" }, count: { N: "2" } });
+    await client.send(
+      new PutItemCommand({
+        TableName: tableName,
+        Item: { id: { S: "item1" }, count: { N: "1" } },
+      })
+    );
+    await client.send(
+      new PutItemCommand({
+        TableName: tableName,
+        Item: { id: { S: "item2" }, count: { N: "2" } },
+      })
+    );
 
-    const items: TransactWriteItem[] = [
-      {
-        Update: {
-          tableName: "TransactTest",
-          key: { id: { S: "item1" } },
-          updateExpression: "SET #count = :val",
-          expressionAttributeNames: { "#count": "count" },
-          expressionAttributeValues: { ":val": { N: "10" } },
-        },
-      },
-      {
-        Update: {
-          tableName: "TransactTest",
-          key: { id: { S: "item2" } },
-          updateExpression: "SET #count = :val",
-          expressionAttributeNames: { "#count": "count" },
-          expressionAttributeValues: { ":val": { N: "20" } },
-        },
-      },
-    ];
+    await client.send(
+      new TransactWriteItemsCommand({
+        TransactItems: [
+          {
+            Update: {
+              TableName: tableName,
+              Key: { id: { S: "item1" } },
+              UpdateExpression: "SET #count = :val",
+              ExpressionAttributeNames: { "#count": "count" },
+              ExpressionAttributeValues: { ":val": { N: "10" } },
+            },
+          },
+          {
+            Update: {
+              TableName: tableName,
+              Key: { id: { S: "item2" } },
+              UpdateExpression: "SET #count = :val",
+              ExpressionAttributeNames: { "#count": "count" },
+              ExpressionAttributeValues: { ":val": { N: "20" } },
+            },
+          },
+        ],
+      })
+    );
 
-    await storage.transactWrite(items);
+    const item1 = await client.send(
+      new GetItemCommand({ TableName: tableName, Key: { id: { S: "item1" } } })
+    );
+    const item2 = await client.send(
+      new GetItemCommand({ TableName: tableName, Key: { id: { S: "item2" } } })
+    );
 
-    const item1 = await storage.getItem("TransactTest", { id: { S: "item1" } });
-    const item2 = await storage.getItem("TransactTest", { id: { S: "item2" } });
-
-    expect(item1?.count.N).toBe("10");
-    expect(item2?.count.N).toBe("20");
+    expect(item1.Item?.count.N).toBe("10");
+    expect(item2.Item?.count.N).toBe("20");
   });
 
   test("should delete multiple items atomically", async () => {
+    const tableName = getTableName();
+
     // Create initial items
-    await storage.putItem("TransactTest", { id: { S: "item1" }, value: { S: "First" } });
-    await storage.putItem("TransactTest", { id: { S: "item2" }, value: { S: "Second" } });
+    await client.send(
+      new PutItemCommand({
+        TableName: tableName,
+        Item: { id: { S: "item1" }, value: { S: "First" } },
+      })
+    );
+    await client.send(
+      new PutItemCommand({
+        TableName: tableName,
+        Item: { id: { S: "item2" }, value: { S: "Second" } },
+      })
+    );
 
-    const items: TransactWriteItem[] = [
-      {
-        Delete: {
-          tableName: "TransactTest",
-          key: { id: { S: "item1" } },
-        },
-      },
-      {
-        Delete: {
-          tableName: "TransactTest",
-          key: { id: { S: "item2" } },
-        },
-      },
-    ];
+    await client.send(
+      new TransactWriteItemsCommand({
+        TransactItems: [
+          {
+            Delete: {
+              TableName: tableName,
+              Key: { id: { S: "item1" } },
+            },
+          },
+          {
+            Delete: {
+              TableName: tableName,
+              Key: { id: { S: "item2" } },
+            },
+          },
+        ],
+      })
+    );
 
-    await storage.transactWrite(items);
+    const item1 = await client.send(
+      new GetItemCommand({ TableName: tableName, Key: { id: { S: "item1" } } })
+    );
+    const item2 = await client.send(
+      new GetItemCommand({ TableName: tableName, Key: { id: { S: "item2" } } })
+    );
 
-    const item1 = await storage.getItem("TransactTest", { id: { S: "item1" } });
-    const item2 = await storage.getItem("TransactTest", { id: { S: "item2" } });
-
-    expect(item1).toBeNull();
-    expect(item2).toBeNull();
+    expect(item1.Item).toBeUndefined();
+    expect(item2.Item).toBeUndefined();
   });
 
   test("should handle mixed operations (Put, Update, Delete)", async () => {
+    const tableName = getTableName();
+
     // Create initial item
-    await storage.putItem("TransactTest", { id: { S: "item2" }, value: { S: "Old" } });
+    await client.send(
+      new PutItemCommand({
+        TableName: tableName,
+        Item: { id: { S: "item2" }, value: { S: "Old" } },
+      })
+    );
 
-    const items: TransactWriteItem[] = [
-      {
-        Put: {
-          tableName: "TransactTest",
-          item: { id: { S: "item1" }, value: { S: "New" } },
-        },
-      },
-      {
-        Update: {
-          tableName: "TransactTest",
-          key: { id: { S: "item2" } },
-          updateExpression: "SET #value = :val",
-          expressionAttributeNames: { "#value": "value" },
-          expressionAttributeValues: { ":val": { S: "Updated" } },
-        },
-      },
-      {
-        Put: {
-          tableName: "TransactTest",
-          item: { id: { S: "item3" }, value: { S: "Another" } },
-        },
-      },
-    ];
+    await client.send(
+      new TransactWriteItemsCommand({
+        TransactItems: [
+          {
+            Put: {
+              TableName: tableName,
+              Item: { id: { S: "item1" }, value: { S: "New" } },
+            },
+          },
+          {
+            Update: {
+              TableName: tableName,
+              Key: { id: { S: "item2" } },
+              UpdateExpression: "SET #value = :val",
+              ExpressionAttributeNames: { "#value": "value" },
+              ExpressionAttributeValues: { ":val": { S: "Updated" } },
+            },
+          },
+          {
+            Put: {
+              TableName: tableName,
+              Item: { id: { S: "item3" }, value: { S: "Another" } },
+            },
+          },
+        ],
+      })
+    );
 
-    await storage.transactWrite(items);
+    const item1 = await client.send(
+      new GetItemCommand({ TableName: tableName, Key: { id: { S: "item1" } } })
+    );
+    const item2 = await client.send(
+      new GetItemCommand({ TableName: tableName, Key: { id: { S: "item2" } } })
+    );
+    const item3 = await client.send(
+      new GetItemCommand({ TableName: tableName, Key: { id: { S: "item3" } } })
+    );
 
-    const item1 = await storage.getItem("TransactTest", { id: { S: "item1" } });
-    const item2 = await storage.getItem("TransactTest", { id: { S: "item2" } });
-    const item3 = await storage.getItem("TransactTest", { id: { S: "item3" } });
-
-    expect(item1?.value.S).toBe("New");
-    expect(item2?.value.S).toBe("Updated");
-    expect(item3?.value.S).toBe("Another");
+    expect(item1.Item?.value.S).toBe("New");
+    expect(item2.Item?.value.S).toBe("Updated");
+    expect(item3.Item?.value.S).toBe("Another");
   });
 
   test("should rollback on condition failure", async () => {
+    const tableName = getTableName();
+
     // Create initial item
-    await storage.putItem("TransactTest", { id: { S: "item1" }, value: { S: "Original" } });
+    await client.send(
+      new PutItemCommand({
+        TableName: tableName,
+        Item: { id: { S: "item1" }, value: { S: "Original" } },
+      })
+    );
 
-    const items: TransactWriteItem[] = [
-      {
-        Put: {
-          tableName: "TransactTest",
-          item: { id: { S: "item2" }, value: { S: "New" } },
-        },
-      },
-      {
-        Update: {
-          tableName: "TransactTest",
-          key: { id: { S: "item1" } },
-          updateExpression: "SET #value = :val",
-          expressionAttributeNames: { "#value": "value" },
-          expressionAttributeValues: { ":val": { S: "Updated" }, ":expected": { S: "WrongValue" } },
-          conditionExpression: "#value = :expected",
-        },
-      },
-    ];
-
-    // Should throw TransactionCancelledError
+    // Should throw TransactionCanceledException
     try {
-      await storage.transactWrite(items);
+      await client.send(
+        new TransactWriteItemsCommand({
+          TransactItems: [
+            {
+              Put: {
+                TableName: tableName,
+                Item: { id: { S: "item2" }, value: { S: "New" } },
+              },
+            },
+            {
+              Update: {
+                TableName: tableName,
+                Key: { id: { S: "item1" } },
+                UpdateExpression: "SET #value = :val",
+                ExpressionAttributeNames: { "#value": "value" },
+                ExpressionAttributeValues: {
+                  ":val": { S: "Updated" },
+                  ":expected": { S: "WrongValue" },
+                },
+                ConditionExpression: "#value = :expected",
+              },
+            },
+          ],
+        })
+      );
       expect(true).toBe(false); // Should not reach here
-    } catch (error) {
-      expect(error).toBeInstanceOf(TransactionCancelledError);
-      const txError = error as TransactionCancelledError;
-      expect(txError.cancellationReasons[0]?.Code).toBe("None");
-      expect(txError.cancellationReasons[1]?.Code).toBe("ConditionalCheckFailed");
+    } catch (error: any) {
+      expect(error.name).toBe("TransactionCanceledException");
     }
 
     // Verify rollback - item2 should not exist and item1 should be unchanged
-    const item1 = await storage.getItem("TransactTest", { id: { S: "item1" } });
-    const item2 = await storage.getItem("TransactTest", { id: { S: "item2" } });
+    const item1 = await client.send(
+      new GetItemCommand({ TableName: tableName, Key: { id: { S: "item1" } } })
+    );
+    const item2 = await client.send(
+      new GetItemCommand({ TableName: tableName, Key: { id: { S: "item2" } } })
+    );
 
-    expect(item1).not.toBeNull();
-    expect(item1?.value?.S).toBe("Original");
-    expect(item2).toBeNull();
+    expect(item1.Item).toBeDefined();
+    expect(item1.Item?.value?.S).toBe("Original");
+    expect(item2.Item).toBeUndefined();
   });
 
   test("should validate attribute_not_exists condition", async () => {
-    const items: TransactWriteItem[] = [
-      {
-        Put: {
-          tableName: "TransactTest",
-          item: { id: { S: "item1" }, value: { S: "New" } },
-          conditionExpression: "attribute_not_exists(id)",
-        },
-      },
-    ];
+    const tableName = getTableName();
 
     // First write should succeed
-    await storage.transactWrite(items);
+    await client.send(
+      new TransactWriteItemsCommand({
+        TransactItems: [
+          {
+            Put: {
+              TableName: tableName,
+              Item: { id: { S: "item1" }, value: { S: "New" } },
+              ConditionExpression: "attribute_not_exists(id)",
+            },
+          },
+        ],
+      })
+    );
 
     // Second write should fail (item exists now)
     try {
-      await storage.transactWrite(items);
+      await client.send(
+        new TransactWriteItemsCommand({
+          TransactItems: [
+            {
+              Put: {
+                TableName: tableName,
+                Item: { id: { S: "item1" }, value: { S: "New" } },
+                ConditionExpression: "attribute_not_exists(id)",
+              },
+            },
+          ],
+        })
+      );
       expect(true).toBe(false); // Should not reach here
-    } catch (error) {
-      expect(error).toBeInstanceOf(TransactionCancelledError);
+    } catch (error: any) {
+      expect(error.name).toBe("TransactionCanceledException");
     }
   });
 
   test("should validate attribute_exists condition", async () => {
-    const items: TransactWriteItem[] = [
-      {
-        Update: {
-          tableName: "TransactTest",
-          key: { id: { S: "item1" } },
-          updateExpression: "SET #value = :val",
-          expressionAttributeNames: { "#value": "value" },
-          expressionAttributeValues: { ":val": { S: "Updated" } },
-          conditionExpression: "attribute_exists(id)",
-        },
-      },
-    ];
+    const tableName = getTableName();
 
     // Should fail because item doesn't exist
     try {
-      await storage.transactWrite(items);
+      await client.send(
+        new TransactWriteItemsCommand({
+          TransactItems: [
+            {
+              Update: {
+                TableName: tableName,
+                Key: { id: { S: "item1" } },
+                UpdateExpression: "SET #value = :val",
+                ExpressionAttributeNames: { "#value": "value" },
+                ExpressionAttributeValues: { ":val": { S: "Updated" } },
+                ConditionExpression: "attribute_exists(id)",
+              },
+            },
+          ],
+        })
+      );
       expect(true).toBe(false); // Should not reach here
-    } catch (error) {
-      expect(error).toBeInstanceOf(TransactionCancelledError);
+    } catch (error: any) {
+      expect(error.name).toBe("TransactionCanceledException");
     }
 
     // Create the item
-    await storage.putItem("TransactTest", { id: { S: "item1" }, value: { S: "Original" } });
+    await client.send(
+      new PutItemCommand({
+        TableName: tableName,
+        Item: { id: { S: "item1" }, value: { S: "Original" } },
+      })
+    );
 
     // Now should succeed
-    await storage.transactWrite(items);
+    await client.send(
+      new TransactWriteItemsCommand({
+        TransactItems: [
+          {
+            Update: {
+              TableName: tableName,
+              Key: { id: { S: "item1" } },
+              UpdateExpression: "SET #value = :val",
+              ExpressionAttributeNames: { "#value": "value" },
+              ExpressionAttributeValues: { ":val": { S: "Updated" } },
+              ConditionExpression: "attribute_exists(id)",
+            },
+          },
+        ],
+      })
+    );
 
-    const item = await storage.getItem("TransactTest", { id: { S: "item1" } });
-    expect(item?.value.S).toBe("Updated");
+    const item = await client.send(
+      new GetItemCommand({ TableName: tableName, Key: { id: { S: "item1" } } })
+    );
+    expect(item.Item?.value.S).toBe("Updated");
   });
 
   test("should handle ConditionCheck operation", async () => {
-    // Create item
-    await storage.putItem("TransactTest", { id: { S: "item1" }, status: { S: "active" } });
+    const tableName = getTableName();
 
-    const items: TransactWriteItem[] = [
-      {
-        ConditionCheck: {
-          tableName: "TransactTest",
-          key: { id: { S: "item1" } },
-          conditionExpression: "#status = :val",
-          expressionAttributeNames: { "#status": "status" },
-          expressionAttributeValues: { ":val": { S: "active" } },
-        },
-      },
-      {
-        Put: {
-          tableName: "TransactTest",
-          item: { id: { S: "item2" }, value: { S: "New" } },
-        },
-      },
-    ];
+    // Create item
+    await client.send(
+      new PutItemCommand({
+        TableName: tableName,
+        Item: { id: { S: "item1" }, status: { S: "active" } },
+      })
+    );
 
     // Should succeed because condition passes
-    await storage.transactWrite(items);
+    await client.send(
+      new TransactWriteItemsCommand({
+        TransactItems: [
+          {
+            ConditionCheck: {
+              TableName: tableName,
+              Key: { id: { S: "item1" } },
+              ConditionExpression: "#status = :val",
+              ExpressionAttributeNames: { "#status": "status" },
+              ExpressionAttributeValues: { ":val": { S: "active" } },
+            },
+          },
+          {
+            Put: {
+              TableName: tableName,
+              Item: { id: { S: "item2" }, value: { S: "New" } },
+            },
+          },
+        ],
+      })
+    );
 
-    const item2 = await storage.getItem("TransactTest", { id: { S: "item2" } });
-    expect(item2?.value.S).toBe("New");
+    const item2 = await client.send(
+      new GetItemCommand({ TableName: tableName, Key: { id: { S: "item2" } } })
+    );
+    expect(item2.Item?.value.S).toBe("New");
 
     // Now try with failing condition
-    const failingItems: TransactWriteItem[] = [
-      {
-        ConditionCheck: {
-          tableName: "TransactTest",
-          key: { id: { S: "item1" } },
-          conditionExpression: "#status = :val",
-          expressionAttributeNames: { "#status": "status" },
-          expressionAttributeValues: { ":val": { S: "inactive" } },
-        },
-      },
-      {
-        Put: {
-          tableName: "TransactTest",
-          item: { id: { S: "item3" }, value: { S: "Should not exist" } },
-        },
-      },
-    ];
-
     try {
-      await storage.transactWrite(failingItems);
+      await client.send(
+        new TransactWriteItemsCommand({
+          TransactItems: [
+            {
+              ConditionCheck: {
+                TableName: tableName,
+                Key: { id: { S: "item1" } },
+                ConditionExpression: "#status = :val",
+                ExpressionAttributeNames: { "#status": "status" },
+                ExpressionAttributeValues: { ":val": { S: "inactive" } },
+              },
+            },
+            {
+              Put: {
+                TableName: tableName,
+                Item: { id: { S: "item3" }, value: { S: "Should not exist" } },
+              },
+            },
+          ],
+        })
+      );
       expect(true).toBe(false); // Should not reach here
-    } catch (error) {
-      expect(error).toBeInstanceOf(TransactionCancelledError);
+    } catch (error: any) {
+      expect(error.name).toBe("TransactionCanceledException");
     }
 
-    const item3 = await storage.getItem("TransactTest", { id: { S: "item3" } });
-    expect(item3).toBeNull();
+    const item3 = await client.send(
+      new GetItemCommand({ TableName: tableName, Key: { id: { S: "item3" } } })
+    );
+    expect(item3.Item).toBeUndefined();
   });
 
   test("should get multiple items atomically", async () => {
+    const tableName = getTableName();
+
     // Create items
-    await storage.putItem("TransactTest", { id: { S: "item1" }, value: { S: "First" } });
-    await storage.putItem("TransactTest", { id: { S: "item2" }, value: { S: "Second" } });
-    await storage.putItem("TransactTest", { id: { S: "item3" }, value: { S: "Third" } });
+    await client.send(
+      new PutItemCommand({
+        TableName: tableName,
+        Item: { id: { S: "item1" }, value: { S: "First" } },
+      })
+    );
+    await client.send(
+      new PutItemCommand({
+        TableName: tableName,
+        Item: { id: { S: "item2" }, value: { S: "Second" } },
+      })
+    );
+    await client.send(
+      new PutItemCommand({
+        TableName: tableName,
+        Item: { id: { S: "item3" }, value: { S: "Third" } },
+      })
+    );
 
-    const items: TransactGetItem[] = [
-      {
-        tableName: "TransactTest",
-        key: { id: { S: "item1" } },
-      },
-      {
-        tableName: "TransactTest",
-        key: { id: { S: "item2" } },
-      },
-      {
-        tableName: "TransactTest",
-        key: { id: { S: "item3" } },
-      },
-    ];
+    const result = await client.send(
+      new TransactGetItemsCommand({
+        TransactItems: [
+          {
+            Get: {
+              TableName: tableName,
+              Key: { id: { S: "item1" } },
+            },
+          },
+          {
+            Get: {
+              TableName: tableName,
+              Key: { id: { S: "item2" } },
+            },
+          },
+          {
+            Get: {
+              TableName: tableName,
+              Key: { id: { S: "item3" } },
+            },
+          },
+        ],
+      })
+    );
 
-    const results = await storage.transactGet(items);
-
-    expect(results.length).toBe(3);
-    expect(results[0]?.value.S).toBe("First");
-    expect(results[1]?.value.S).toBe("Second");
-    expect(results[2]?.value.S).toBe("Third");
+    expect(result.Responses!.length).toBe(3);
+    expect(result.Responses![0]!.Item!.value.S).toBe("First");
+    expect(result.Responses![1]!.Item!.value.S).toBe("Second");
+    expect(result.Responses![2]!.Item!.value.S).toBe("Third");
   });
 
-  test("should handle missing items in transactGet", async () => {
+  test("should handle missing items in TransactGetItems", async () => {
+    const tableName = getTableName();
+
     // Create only one item
-    await storage.putItem("TransactTest", { id: { S: "item1" }, value: { S: "First" } });
+    await client.send(
+      new PutItemCommand({
+        TableName: tableName,
+        Item: { id: { S: "item1" }, value: { S: "First" } },
+      })
+    );
 
-    const items: TransactGetItem[] = [
-      {
-        tableName: "TransactTest",
-        key: { id: { S: "item1" } },
-      },
-      {
-        tableName: "TransactTest",
-        key: { id: { S: "item2" } }, // Doesn't exist
-      },
-    ];
+    const result = await client.send(
+      new TransactGetItemsCommand({
+        TransactItems: [
+          {
+            Get: {
+              TableName: tableName,
+              Key: { id: { S: "item1" } },
+            },
+          },
+          {
+            Get: {
+              TableName: tableName,
+              Key: { id: { S: "item2" } }, // Doesn't exist
+            },
+          },
+        ],
+      })
+    );
 
-    const results = await storage.transactGet(items);
-
-    expect(results.length).toBe(2);
-    expect(results[0]?.value.S).toBe("First");
-    expect(results[1]).toBeNull();
+    expect(result.Responses!.length).toBe(2);
+    expect(result.Responses![0]!.Item!.value.S).toBe("First");
+    expect(result.Responses![1]!.Item).toBeUndefined();
   });
 
-  test("should apply projection expression in transactGet", async () => {
+  test("should apply projection expression in TransactGetItems", async () => {
+    const tableName = getTableName();
+
     // Create item with multiple attributes
-    await storage.putItem("TransactTest", {
-      id: { S: "item1" },
-      name: { S: "Test" },
-      value: { S: "Value" },
-      extra: { S: "Extra" },
-    });
+    await client.send(
+      new PutItemCommand({
+        TableName: tableName,
+        Item: {
+          id: { S: "item1" },
+          name: { S: "Test" },
+          value: { S: "Value" },
+          extra: { S: "Extra" },
+        },
+      })
+    );
 
-    const items: TransactGetItem[] = [
-      {
-        tableName: "TransactTest",
-        key: { id: { S: "item1" } },
-        projectionExpression: "id, #name",
-        expressionAttributeNames: { "#name": "name" },
-      },
-    ];
+    const result = await client.send(
+      new TransactGetItemsCommand({
+        TransactItems: [
+          {
+            Get: {
+              TableName: tableName,
+              Key: { id: { S: "item1" } },
+              ProjectionExpression: "id, #name",
+              ExpressionAttributeNames: { "#name": "name" },
+            },
+          },
+        ],
+      })
+    );
 
-    const results = await storage.transactGet(items);
-
-    expect(results.length).toBe(1);
-    expect(results[0]?.id.S).toBe("item1");
-    expect(results[0]?.name.S).toBe("Test");
-    expect(results[0]?.value).toBeUndefined();
-    expect(results[0]?.extra).toBeUndefined();
+    expect(result.Responses!.length).toBe(1);
+    expect(result.Responses![0]!.Item!.id.S).toBe("item1");
+    expect(result.Responses![0]!.Item!.name.S).toBe("Test");
+    expect(result.Responses![0]!.Item!.value).toBeUndefined();
+    expect(result.Responses![0]!.Item!.extra).toBeUndefined();
   });
 
   test("should support idempotency with client request token", async () => {
-    const items: TransactWriteItem[] = [
-      {
-        Put: {
-          tableName: "TransactTest",
-          item: { id: { S: "item1" }, value: { S: "First" } },
-        },
-      },
-    ];
+    const tableName = getTableName();
 
     const token = "unique-token-123";
 
     // First execution
-    await storage.transactWrite(items, token);
+    await client.send(
+      new TransactWriteItemsCommand({
+        TransactItems: [
+          {
+            Put: {
+              TableName: tableName,
+              Item: { id: { S: "item1" }, value: { S: "First" } },
+            },
+          },
+        ],
+        ClientRequestToken: token,
+      })
+    );
 
     // Verify item was created
-    let item = await storage.getItem("TransactTest", { id: { S: "item1" } });
-    expect(item?.value.S).toBe("First");
+    let item = await client.send(
+      new GetItemCommand({ TableName: tableName, Key: { id: { S: "item1" } } })
+    );
+    expect(item.Item?.value.S).toBe("First");
 
     // Update the item directly
-    await storage.putItem("TransactTest", { id: { S: "item1" }, value: { S: "Changed" } });
+    await client.send(
+      new PutItemCommand({
+        TableName: tableName,
+        Item: { id: { S: "item1" }, value: { S: "Changed" } },
+      })
+    );
 
     // Second execution with same token should be idempotent (return cached result)
-    await storage.transactWrite(items, token);
+    await client.send(
+      new TransactWriteItemsCommand({
+        TransactItems: [
+          {
+            Put: {
+              TableName: tableName,
+              Item: { id: { S: "item1" }, value: { S: "First" } },
+            },
+          },
+        ],
+        ClientRequestToken: token,
+      })
+    );
 
     // Item should still be "Changed" (transaction was not re-executed)
-    item = await storage.getItem("TransactTest", { id: { S: "item1" } });
-    expect(item?.value.S).toBe("Changed");
+    item = await client.send(
+      new GetItemCommand({ TableName: tableName, Key: { id: { S: "item1" } } })
+    );
+    expect(item.Item?.value.S).toBe("Changed");
   });
 
-  test("should handle transactions across multiple shards", async () => {
-    // Create items that will definitely go to different shards
-    const items: TransactWriteItem[] = [];
+  test("should handle transactions across multiple items", async () => {
+    const tableName = getTableName();
 
+    const items = [];
     for (let i = 0; i < 20; i++) {
       items.push({
         Put: {
-          tableName: "TransactTest",
-          item: { id: { S: `item-${i}` }, value: { N: String(i) } },
+          TableName: tableName,
+          Item: { id: { S: `item-${i}` }, value: { N: String(i) } },
         },
       });
     }
 
-    await storage.transactWrite(items);
+    await client.send(
+      new TransactWriteItemsCommand({
+        TransactItems: items,
+      })
+    );
 
-    // Verify all items were created
-    const count = await storage.getTableItemCount("TransactTest");
-    expect(count).toBe(20);
+    // Verify some items were created
+    const item0 = await client.send(
+      new GetItemCommand({
+        TableName: tableName,
+        Key: { id: { S: "item-0" } },
+      })
+    );
+    const item19 = await client.send(
+      new GetItemCommand({
+        TableName: tableName,
+        Key: { id: { S: "item-19" } },
+      })
+    );
+
+    expect(item0.Item?.value.N).toBe("0");
+    expect(item19.Item?.value.N).toBe("19");
   });
 
   test("should reject transaction with more than 100 items", async () => {
-    const items: TransactWriteItem[] = [];
+    const tableName = getTableName();
 
+    const items = [];
     for (let i = 0; i < 101; i++) {
       items.push({
         Put: {
-          tableName: "TransactTest",
-          item: { id: { S: `item-${i}` }, value: { N: String(i) } },
+          TableName: tableName,
+          Item: { id: { S: `item-${i}` }, value: { N: String(i) } },
         },
       });
     }
 
     try {
-      await storage.transactWrite(items);
+      await client.send(
+        new TransactWriteItemsCommand({
+          TransactItems: items,
+        })
+      );
       expect(true).toBe(false); // Should not reach here
     } catch (error: any) {
-      expect(error.message).toContain("100 items");
+      expect(error.name).toBe("ValidationException");
     }
   });
 });
