@@ -9,7 +9,8 @@
       "WebFetch(domain:bun.sh)",
       "WebFetch(domain:github.com)",
       "Bash(go mod tidy:*)",
-      "Bash(go test:*)"
+      "Bash(go test:*)",
+      "Bash(sqlite3:*)"
     ],
     "deny": [],
     "ask": []

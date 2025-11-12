@@ -24,17 +24,23 @@ export class Shard {
       CREATE TABLE IF NOT EXISTS items (
         table_name TEXT NOT NULL,
         partition_key TEXT NOT NULL,
+        sort_key TEXT NOT NULL DEFAULT '',
         item_data TEXT NOT NULL,
         ongoing_transaction_id TEXT,
         last_update_timestamp INTEGER NOT NULL DEFAULT 0,
         lsn INTEGER NOT NULL DEFAULT 0,
-        PRIMARY KEY (table_name, partition_key)
+        PRIMARY KEY (table_name, partition_key, sort_key)
       )
     `);
 
     // Index for table scans
     this.db.run(
       `CREATE INDEX IF NOT EXISTS idx_items_table ON items(table_name)`
+    );
+
+    // Index for range queries on sort key
+    this.db.run(
+      `CREATE INDEX IF NOT EXISTS idx_items_range ON items(table_name, partition_key, sort_key)`
     );
   }
 
@@ -43,16 +49,15 @@ export class Shard {
     // Serialize request to simulate DO boundary
     req = JSON.parse(JSON.stringify(req));
 
-    const itemKey = this.getKeyString(req.key);
+    const partitionKey = req.partitionKeyValue;
+    const sortKey = req.sortKeyValue;
 
-    // Read current item
-    const result = this.db
-      .query(
-        `SELECT item_data, ongoing_transaction_id, last_update_timestamp, lsn
-         FROM items
-         WHERE table_name = ? AND partition_key = ?`
-      )
-      .get(req.tableName, itemKey) as any;
+    // Read current item - empty string means no sort key
+    const query = `SELECT item_data, ongoing_transaction_id, last_update_timestamp, lsn
+                   FROM items
+                   WHERE table_name = ? AND partition_key = ? AND sort_key = ?`;
+
+    const result = this.db.query(query).get(req.tableName, partitionKey, sortKey) as any;
 
     let currentItem: DynamoDBItem | null = null;
     let currentLsn = 0;
@@ -113,19 +118,20 @@ export class Shard {
       this.db.run(
         `UPDATE items
          SET ongoing_transaction_id = ?
-         WHERE table_name = ? AND partition_key = ?`,
-        [req.transactionId, req.tableName, itemKey]
+         WHERE table_name = ? AND partition_key = ? AND sort_key = ?`,
+        [req.transactionId, req.tableName, partitionKey, sortKey]
       );
     } else {
       // For new items (Put operation), create placeholder with lock
       const placeholderItem = { ...req.key };
       this.db.run(
         `INSERT INTO items
-         (table_name, partition_key, item_data, ongoing_transaction_id, last_update_timestamp, lsn)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+         (table_name, partition_key, sort_key, item_data, ongoing_transaction_id, last_update_timestamp, lsn)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [
           req.tableName,
-          itemKey,
+          partitionKey,
+          sortKey,
           JSON.stringify(placeholderItem),
           req.transactionId,
           0,
@@ -145,15 +151,16 @@ export class Shard {
     // Serialize request to simulate DO boundary
     req = JSON.parse(JSON.stringify(req));
 
-    const itemKey = this.getKeyString(req.key);
+    const partitionKey = req.partitionKeyValue;
+    const sortKey = req.sortKeyValue;
 
     if (req.operation === "ConditionCheck") {
       // Just release the lock, no actual write
       this.db.run(
         `UPDATE items
          SET ongoing_transaction_id = NULL
-         WHERE table_name = ? AND partition_key = ? AND ongoing_transaction_id = ?`,
-        [req.tableName, itemKey, req.transactionId]
+         WHERE table_name = ? AND partition_key = ? AND sort_key = ? AND ongoing_transaction_id = ?`,
+        [req.tableName, partitionKey, sortKey, req.transactionId]
       );
       return;
     }
@@ -162,8 +169,8 @@ export class Shard {
       // Delete the item
       this.db.run(
         `DELETE FROM items
-         WHERE table_name = ? AND partition_key = ? AND ongoing_transaction_id = ?`,
-        [req.tableName, itemKey, req.transactionId]
+         WHERE table_name = ? AND partition_key = ? AND sort_key = ? AND ongoing_transaction_id = ?`,
+        [req.tableName, partitionKey, sortKey, req.transactionId]
       );
       return;
     }
@@ -175,13 +182,11 @@ export class Shard {
       finalItem = req.item!;
     } else {
       // Update operation - apply update expression
-      const result = this.db
-        .query(
-          `SELECT item_data, lsn
-           FROM items
-           WHERE table_name = ? AND partition_key = ?`
-        )
-        .get(req.tableName, itemKey) as any;
+      const result = this.db.query(
+        `SELECT item_data, lsn
+         FROM items
+         WHERE table_name = ? AND partition_key = ? AND sort_key = ?`
+      ).get(req.tableName, partitionKey, sortKey) as any;
 
       let currentItem = result ? JSON.parse(result.item_data) : { ...req.key };
 
@@ -195,20 +200,18 @@ export class Shard {
     }
 
     // Get current LSN to increment
-    const result = this.db
-      .query(
-        `SELECT lsn FROM items WHERE table_name = ? AND partition_key = ?`
-      )
-      .get(req.tableName, itemKey) as any;
+    const result = this.db.query(
+      `SELECT lsn FROM items WHERE table_name = ? AND partition_key = ? AND sort_key = ?`
+    ).get(req.tableName, partitionKey, sortKey) as any;
 
     const newLsn = result ? result.lsn + 1 : 1;
 
     // Write item with updated metadata
     this.db.run(
       `INSERT OR REPLACE INTO items
-       (table_name, partition_key, item_data, ongoing_transaction_id, last_update_timestamp, lsn)
-       VALUES (?, ?, ?, NULL, ?, ?)`,
-      [req.tableName, itemKey, JSON.stringify(finalItem), req.timestamp, newLsn]
+       (table_name, partition_key, sort_key, item_data, ongoing_transaction_id, last_update_timestamp, lsn)
+       VALUES (?, ?, ?, ?, NULL, ?, ?)`,
+      [req.tableName, partitionKey, sortKey, JSON.stringify(finalItem), req.timestamp, newLsn]
     );
   }
 
@@ -217,30 +220,29 @@ export class Shard {
     // Serialize request to simulate DO boundary
     req = JSON.parse(JSON.stringify(req));
 
-    for (const key of req.keys) {
-      const itemKey = this.getKeyString(key);
+    for (const keyValue of req.keyValues) {
+      const partitionKey = keyValue.partitionKeyValue;
+      const sortKey = keyValue.sortKeyValue;
 
       // Check if item was a placeholder (created during prepare)
-      const result = this.db
-        .query(
-          `SELECT lsn FROM items WHERE table_name = ? AND partition_key = ?`
-        )
-        .get(req.tableName, itemKey) as any;
+      const result = this.db.query(
+        `SELECT lsn FROM items WHERE table_name = ? AND partition_key = ? AND sort_key = ?`
+      ).get(req.tableName, partitionKey, sortKey) as any;
 
       if (result && result.lsn === 0) {
         // Placeholder item - delete it
         this.db.run(
           `DELETE FROM items
-           WHERE table_name = ? AND partition_key = ? AND ongoing_transaction_id = ?`,
-          [req.tableName, itemKey, req.transactionId]
+           WHERE table_name = ? AND partition_key = ? AND sort_key = ? AND ongoing_transaction_id = ?`,
+          [req.tableName, partitionKey, sortKey, req.transactionId]
         );
       } else {
         // Real item - just clear the lock
         this.db.run(
           `UPDATE items
            SET ongoing_transaction_id = NULL
-           WHERE table_name = ? AND partition_key = ? AND ongoing_transaction_id = ?`,
-          [req.tableName, itemKey, req.transactionId]
+           WHERE table_name = ? AND partition_key = ? AND sort_key = ? AND ongoing_transaction_id = ?`,
+          [req.tableName, partitionKey, sortKey, req.transactionId]
         );
       }
     }
@@ -248,38 +250,44 @@ export class Shard {
 
   // Regular operations (non-transactional)
 
-  async putItem(tableName: string, key: string, item: DynamoDBItem) {
+  async putItem(tableName: string, partitionKey: string, sortKey: string, item: DynamoDBItem) {
     const itemData = JSON.stringify(item);
     // For non-transactional operations, set timestamp to 0 to avoid conflicts
     // In production, we'd use a proper timestamp ordering scheme
+
+    // Get current LSN for this item (if it exists)
+    const currentLsnResult = this.db.query(
+      `SELECT lsn FROM items WHERE table_name = ? AND partition_key = ? AND sort_key = ?`
+    ).get(tableName, partitionKey, sortKey) as any;
+    const newLsn = currentLsnResult ? currentLsnResult.lsn + 1 : 1;
+
     this.db.run(
       `INSERT OR REPLACE INTO items
-       (table_name, partition_key, item_data, ongoing_transaction_id, last_update_timestamp, lsn)
-       VALUES (?, ?, ?, NULL, 0, COALESCE((SELECT lsn + 1 FROM items WHERE table_name = ? AND partition_key = ?), 1))`,
-      [tableName, key, itemData, tableName, key]
+       (table_name, partition_key, sort_key, item_data, ongoing_transaction_id, last_update_timestamp, lsn)
+       VALUES (?, ?, ?, ?, NULL, 0, ?)`,
+      [tableName, partitionKey, sortKey, itemData, newLsn]
     );
   }
 
-  async getItem(tableName: string, key: string): Promise<DynamoDBItem | null> {
-    const result = this.db
-      .query(
-        `SELECT item_data FROM items WHERE table_name = ? AND partition_key = ?`
-      )
-      .get(tableName, key) as any;
+  async getItem(tableName: string, partitionKey: string, sortKey: string): Promise<DynamoDBItem | null> {
+    const result = this.db.query(
+      `SELECT item_data FROM items WHERE table_name = ? AND partition_key = ? AND sort_key = ?`
+    ).get(tableName, partitionKey, sortKey) as any;
 
     return result ? JSON.parse(result.item_data) : null;
   }
 
   async deleteItem(
     tableName: string,
-    key: string
+    partitionKey: string,
+    sortKey: string
   ): Promise<DynamoDBItem | null> {
-    const item = await this.getItem(tableName, key);
+    const item = await this.getItem(tableName, partitionKey, sortKey);
     if (!item) return null;
 
     this.db.run(
-      "DELETE FROM items WHERE table_name = ? AND partition_key = ?",
-      [tableName, key]
+      "DELETE FROM items WHERE table_name = ? AND partition_key = ? AND sort_key = ?",
+      [tableName, partitionKey, sortKey]
     );
 
     return item;

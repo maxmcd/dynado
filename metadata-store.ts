@@ -87,6 +87,17 @@ export class MetadataStore {
     return partitionKeyAttr?.AttributeName || null;
   }
 
+  // Helper to get sort key attribute name from schema
+  getSortKeyName(tableName: string): string | null {
+    const schema = this.cache.get(tableName);
+    if (!schema) return null;
+
+    const sortKeyAttr = schema.keySchema.find(
+      (k: any) => k.KeyType === "RANGE"
+    );
+    return sortKeyAttr?.AttributeName || null;
+  }
+
   // Helper to extract key from item based on table schema
   extractKey(tableName: string, item: any): any {
     const schema = this.cache.get(tableName);
@@ -117,6 +128,48 @@ export class MetadataStore {
     }
 
     return JSON.stringify(item[partitionKeyName]);
+  }
+
+  // Helper to get sort key value from item (returns empty string if table has no sort key)
+  getSortKeyValue(tableName: string, item: any): string {
+    const sortKeyName = this.getSortKeyName(tableName);
+    if (!sortKeyName) {
+      return ''; // Table doesn't have a sort key
+    }
+
+    if (!(sortKeyName in item)) {
+      throw new Error(`Sort key attribute missing: ${sortKeyName}`);
+    }
+
+    return JSON.stringify(item[sortKeyName]);
+  }
+
+  // Helper to extract both partition and sort key values as strings for storage
+  extractKeyValues(tableName: string, item: any): { partitionKeyValue: string; sortKeyValue: string } {
+    const partitionKeyValue = this.getPartitionKeyValue(tableName, item);
+    const sortKeyValue = this.getSortKeyValue(tableName, item);
+    return { partitionKeyValue, sortKeyValue };
+  }
+
+  // Helper to extract key values from a key object (not full item)
+  extractKeyValuesFromKey(tableName: string, key: any): { partitionKeyValue: string; sortKeyValue: string } {
+    const partitionKeyName = this.getPartitionKeyName(tableName);
+    const sortKeyName = this.getSortKeyName(tableName);
+
+    if (!partitionKeyName) {
+      throw new Error(`No partition key found for table: ${tableName}`);
+    }
+
+    if (!(partitionKeyName in key)) {
+      throw new Error(`Partition key attribute missing: ${partitionKeyName}`);
+    }
+
+    const partitionKeyValue = JSON.stringify(key[partitionKeyName]);
+    const sortKeyValue = sortKeyName && (sortKeyName in key)
+      ? JSON.stringify(key[sortKeyName])
+      : '';
+
+    return { partitionKeyValue, sortKeyValue };
   }
 
   close() {

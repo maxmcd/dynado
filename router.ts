@@ -64,24 +64,24 @@ export class Router {
   // Item operations - route to specific shard based on partition key
 
   async putItem(tableName: string, item: DynamoDBItem): Promise<void> {
-    const { shard, keyString } = await this.routeToShard(tableName, item);
-    await shard.putItem(tableName, keyString, item);
+    const { shard, partitionKeyValue, sortKeyValue } = await this.routeToShard(tableName, item);
+    await shard.putItem(tableName, partitionKeyValue, sortKeyValue, item);
   }
 
   async getItem(
     tableName: string,
     key: DynamoDBItem
   ): Promise<DynamoDBItem | null> {
-    const { shard, keyString } = await this.routeToShard(tableName, key);
-    return await shard.getItem(tableName, keyString);
+    const { shard, partitionKeyValue, sortKeyValue } = await this.routeToShard(tableName, key);
+    return await shard.getItem(tableName, partitionKeyValue, sortKeyValue);
   }
 
   async deleteItem(
     tableName: string,
     key: DynamoDBItem
   ): Promise<DynamoDBItem | null> {
-    const { shard, keyString } = await this.routeToShard(tableName, key);
-    return await shard.deleteItem(tableName, keyString);
+    const { shard, partitionKeyValue, sortKeyValue } = await this.routeToShard(tableName, key);
+    return await shard.deleteItem(tableName, partitionKeyValue, sortKeyValue);
   }
 
   // Scan/Query operations - fan out to all shards
@@ -179,14 +179,24 @@ export class Router {
     keys: DynamoDBItem[]
   ): Promise<DynamoDBItem[]> {
     // Group keys by shard
-    const keysByShard = new Map<number, Array<{ key: DynamoDBItem; keyString: string }>>();
+    const keysByShard = new Map<
+      number,
+      Array<{
+        key: DynamoDBItem;
+        partitionKeyValue: string;
+        sortKeyValue: string;
+      }>
+    >();
 
     for (const key of keys) {
-      const { shardIndex, keyString } = await this.routeToShard(tableName, key);
+      const { shardIndex, partitionKeyValue, sortKeyValue } = await this.routeToShard(
+        tableName,
+        key
+      );
       if (!keysByShard.has(shardIndex)) {
         keysByShard.set(shardIndex, []);
       }
-      keysByShard.get(shardIndex)!.push({ key, keyString });
+      keysByShard.get(shardIndex)!.push({ key, partitionKeyValue, sortKeyValue });
     }
 
     // Fetch from each shard in parallel
@@ -196,7 +206,9 @@ export class Router {
         if (!shard) return [];
 
         const shardResults = await Promise.all(
-          items.map((item) => shard.getItem(tableName, item.keyString))
+          items.map((item) =>
+            shard.getItem(tableName, item.partitionKeyValue, item.sortKeyValue)
+          )
         );
 
         return shardResults.filter((item) => item !== null) as DynamoDBItem[];
@@ -212,23 +224,35 @@ export class Router {
     deletes: DynamoDBItem[]
   ): Promise<void> {
     // Group operations by shard
-    const putsByShard = new Map<number, Array<{ item: DynamoDBItem; keyString: string }>>();
-    const deletesByShard = new Map<number, Array<{ key: DynamoDBItem; keyString: string }>>();
+    const putsByShard = new Map<
+      number,
+      Array<{ item: DynamoDBItem; partitionKeyValue: string; sortKeyValue: string }>
+    >();
+    const deletesByShard = new Map<
+      number,
+      Array<{ key: DynamoDBItem; partitionKeyValue: string; sortKeyValue: string }>
+    >();
 
     for (const item of puts) {
-      const { shardIndex, keyString } = await this.routeToShard(tableName, item);
+      const { shardIndex, partitionKeyValue, sortKeyValue } = await this.routeToShard(
+        tableName,
+        item
+      );
       if (!putsByShard.has(shardIndex)) {
         putsByShard.set(shardIndex, []);
       }
-      putsByShard.get(shardIndex)!.push({ item, keyString });
+      putsByShard.get(shardIndex)!.push({ item, partitionKeyValue, sortKeyValue });
     }
 
     for (const key of deletes) {
-      const { shardIndex, keyString } = await this.routeToShard(tableName, key);
+      const { shardIndex, partitionKeyValue, sortKeyValue } = await this.routeToShard(
+        tableName,
+        key
+      );
       if (!deletesByShard.has(shardIndex)) {
         deletesByShard.set(shardIndex, []);
       }
-      deletesByShard.get(shardIndex)!.push({ key, keyString });
+      deletesByShard.get(shardIndex)!.push({ key, partitionKeyValue, sortKeyValue });
     }
 
     // Execute operations on each shard in parallel
@@ -246,8 +270,12 @@ export class Router {
         const deletes = deletesByShard.get(shardIndex) || [];
 
         await Promise.all([
-          ...puts.map((p) => shard.putItem(tableName, p.keyString, p.item)),
-          ...deletes.map((d) => shard.deleteItem(tableName, d.keyString)),
+          ...puts.map((p) =>
+            shard.putItem(tableName, p.partitionKeyValue, p.sortKeyValue, p.item)
+          ),
+          ...deletes.map((d) =>
+            shard.deleteItem(tableName, d.partitionKeyValue, d.sortKeyValue)
+          ),
         ]);
       })
     );
@@ -312,9 +340,15 @@ export class Router {
   private async routeToShard(
     tableName: string,
     item: DynamoDBItem
-  ): Promise<{ shard: Shard; shardIndex: number; keyString: string }> {
-    const partitionKey = this.metadataStore.getPartitionKeyValue(tableName, item);
-    const shardIndex = this.getShardIndex(partitionKey);
+  ): Promise<{
+    shard: Shard;
+    shardIndex: number;
+    keyString: string;
+    partitionKeyValue: string;
+    sortKeyValue: string;
+  }> {
+    const keyValues = this.metadataStore.extractKeyValues(tableName, item);
+    const shardIndex = this.getShardIndex(keyValues.partitionKeyValue);
     const shard = this.shards[shardIndex];
 
     if (!shard) {
@@ -324,7 +358,13 @@ export class Router {
     const key = this.metadataStore.extractKey(tableName, item);
     const keyString = this.getKeyString(key);
 
-    return { shard, shardIndex, keyString };
+    return {
+      shard,
+      shardIndex,
+      keyString,
+      partitionKeyValue: keyValues.partitionKeyValue,
+      sortKeyValue: keyValues.sortKeyValue,
+    };
   }
 
   private getShardIndex(partitionKey: string): number {

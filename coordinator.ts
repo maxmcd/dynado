@@ -227,19 +227,22 @@ export class TransactionCoordinator {
     const results: Array<DynamoDBItem | null> = [];
 
     for (const item of items) {
-      const partitionKey = metadataStore.getPartitionKeyValue(
+      const keyValues = metadataStore.extractKeyValuesFromKey(
         item.tableName,
         item.key
       );
-      const shardIndex = this.getShardIndex(partitionKey, shards.length);
+      const shardIndex = this.getShardIndex(keyValues.partitionKeyValue, shards.length);
       const shard = shards[shardIndex];
 
       if (!shard) {
         throw new Error(`Shard ${shardIndex} not found`);
       }
 
-      const keyString = this.getKeyString(item.key);
-      const dbItem = await shard.getItem(item.tableName, keyString);
+      const dbItem = await shard.getItem(
+        item.tableName,
+        keyValues.partitionKeyValue,
+        keyValues.sortKeyValue
+      );
 
       if (dbItem) {
         // Apply projection expression if provided
@@ -339,12 +342,17 @@ export class TransactionCoordinator {
       const partitionKey = metadataStore.getPartitionKeyValue(tableName, key);
       const shardIndex = this.getShardIndex(partitionKey, shards.length);
 
+      // Extract key values for storage
+      const keyValues = metadataStore.extractKeyValuesFromKey(tableName, key);
+
       const prepareRequest: PrepareRequest = {
         transactionId,
         timestamp,
         tableName,
         operation,
         key,
+        partitionKeyValue: keyValues.partitionKeyValue,
+        sortKeyValue: keyValues.sortKeyValue,
         item: itemData,
         updateExpression,
         conditionExpression,
@@ -359,6 +367,8 @@ export class TransactionCoordinator {
         tableName,
         operation,
         key,
+        partitionKeyValue: keyValues.partitionKeyValue,
+        sortKeyValue: keyValues.sortKeyValue,
         item: itemData,
         updateExpression,
         expressionAttributeNames,
@@ -435,7 +445,7 @@ export class TransactionCoordinator {
     // Group release requests by shard
     const releaseByShardMap = new Map<
       number,
-      { tableName: string; keys: DynamoDBItem[] }
+      { tableName: string; keys: DynamoDBItem[]; keyValues: Array<{ partitionKeyValue: string; sortKeyValue: string | null }> }
     >();
 
     for (const op of operations) {
@@ -443,9 +453,14 @@ export class TransactionCoordinator {
         releaseByShardMap.set(op.shardIndex, {
           tableName: op.prepareRequest.tableName,
           keys: [],
+          keyValues: [],
         });
       }
       releaseByShardMap.get(op.shardIndex)!.keys.push(op.releaseKey);
+      releaseByShardMap.get(op.shardIndex)!.keyValues.push({
+        partitionKeyValue: op.prepareRequest.partitionKeyValue,
+        sortKeyValue: op.prepareRequest.sortKeyValue,
+      });
     }
 
     // Send release requests in parallel
@@ -458,6 +473,7 @@ export class TransactionCoordinator {
           transactionId,
           tableName: data.tableName,
           keys: data.keys,
+          keyValues: data.keyValues,
         };
 
         try {

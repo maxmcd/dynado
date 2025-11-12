@@ -102,6 +102,8 @@ export interface PrepareRequest {
   tableName: string;
   operation: "Put" | "Update" | "Delete" | "ConditionCheck";
   key: DynamoDBItem;
+  partitionKeyValue: string; // Extracted partition key value for storage
+  sortKeyValue: string; // Extracted sort key value (empty string if no sort key)
   item?: DynamoDBItem; // For Put
   updateExpression?: string; // For Update
   conditionExpression?: string;
@@ -124,6 +126,8 @@ export interface CommitRequest {
   tableName: string;
   operation: "Put" | "Update" | "Delete" | "ConditionCheck";
   key: DynamoDBItem;
+  partitionKeyValue: string; // Extracted partition key value for storage
+  sortKeyValue: string; // Extracted sort key value (empty string if no sort key)
   item?: DynamoDBItem; // For Put/Update
   updateExpression?: string; // For Update
   expressionAttributeNames?: Record<string, string>;
@@ -134,6 +138,7 @@ export interface ReleaseRequest {
   transactionId: string;
   tableName: string;
   keys: DynamoDBItem[];
+  keyValues: Array<{ partitionKeyValue: string; sortKeyValue: string }>; // Extracted key values for storage
 }
 
 // Result of routing a key to a shard
