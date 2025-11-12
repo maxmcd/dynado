@@ -81,7 +81,10 @@ describe("Two-Phase Commit Protocol", () => {
 
       // Last transaction wins
       const result = await client.send(
-        new GetItemCommand({ TableName: tableName, Key: { id: { S: "conflict-item" } } })
+        new GetItemCommand({
+          TableName: tableName,
+          Key: { id: { S: "conflict-item" } },
+        })
       );
       expect(result.Item?.value!.N).toBe("20");
     });
@@ -121,7 +124,10 @@ describe("Two-Phase Commit Protocol", () => {
       );
 
       const result = await client.send(
-        new GetItemCommand({ TableName: tableName, Key: { id: { S: "item1" } } })
+        new GetItemCommand({
+          TableName: tableName,
+          Key: { id: { S: "item1" } },
+        })
       );
       expect(result.Item?.value!.N).toBe("10");
     });
@@ -154,9 +160,16 @@ describe("Two-Phase Commit Protocol", () => {
                 TableName: tableName,
                 Key: { id: { S: "item1" } },
                 UpdateExpression: "SET #value = :val",
-                ExpressionAttributeNames: { "#value": "value", "#status": "status" },
-                ExpressionAttributeValues: { ":val": { S: "updated" }, ":active": { S: "active" } },
-                ConditionExpression: "attribute_exists(id) AND #status = :active",
+                ExpressionAttributeNames: {
+                  "#value": "value",
+                  "#status": "status",
+                },
+                ExpressionAttributeValues: {
+                  ":val": { S: "updated" },
+                  ":active": { S: "active" },
+                },
+                ConditionExpression:
+                  "attribute_exists(id) AND #status = :active",
               },
             },
             {
@@ -171,10 +184,16 @@ describe("Two-Phase Commit Protocol", () => {
       );
 
       const result1 = await client.send(
-        new GetItemCommand({ TableName: tableName, Key: { id: { S: "item1" } } })
+        new GetItemCommand({
+          TableName: tableName,
+          Key: { id: { S: "item1" } },
+        })
       );
       const result2 = await client.send(
-        new GetItemCommand({ TableName: tableName, Key: { id: { S: "item2" } } })
+        new GetItemCommand({
+          TableName: tableName,
+          Key: { id: { S: "item2" } },
+        })
       );
 
       expect(result1.Item?.value!.S).toBe("updated");
@@ -208,7 +227,10 @@ describe("Two-Phase Commit Protocol", () => {
                 Key: { id: { S: "item1" } },
                 UpdateExpression: "ADD #count :inc",
                 ExpressionAttributeNames: { "#count": "count" },
-                ExpressionAttributeValues: { ":inc": { N: "3" }, ":min": { N: "3" } },
+                ExpressionAttributeValues: {
+                  ":inc": { N: "3" },
+                  ":min": { N: "3" },
+                },
                 ConditionExpression: "#count > :min",
               },
             },
@@ -217,7 +239,10 @@ describe("Two-Phase Commit Protocol", () => {
       );
 
       const result = await client.send(
-        new GetItemCommand({ TableName: tableName, Key: { id: { S: "item1" } } })
+        new GetItemCommand({
+          TableName: tableName,
+          Key: { id: { S: "item1" } },
+        })
       );
       expect(result.Item?.count!.N).toBe("8");
     });
@@ -249,7 +274,10 @@ describe("Two-Phase Commit Protocol", () => {
                 Key: { id: { S: "item1" } },
                 UpdateExpression: "SET #status = :val",
                 ExpressionAttributeNames: { "#status": "status" },
-                ExpressionAttributeValues: { ":val": { S: "inactive" }, ":blocked": { S: "blocked" } },
+                ExpressionAttributeValues: {
+                  ":val": { S: "inactive" },
+                  ":blocked": { S: "blocked" },
+                },
                 ConditionExpression: "NOT #status = :blocked",
               },
             },
@@ -258,7 +286,10 @@ describe("Two-Phase Commit Protocol", () => {
       );
 
       const result = await client.send(
-        new GetItemCommand({ TableName: tableName, Key: { id: { S: "item1" } } })
+        new GetItemCommand({
+          TableName: tableName,
+          Key: { id: { S: "item1" } },
+        })
       );
       expect(result.Item?.status!.S).toBe("inactive");
     });
@@ -293,7 +324,10 @@ describe("Two-Phase Commit Protocol", () => {
                 TableName: tableName,
                 Key: { id: { S: "item1" } },
                 UpdateExpression: "SET #count = :val",
-                ExpressionAttributeNames: { "#status": "status", "#count": "count" },
+                ExpressionAttributeNames: {
+                  "#status": "status",
+                  "#count": "count",
+                },
                 ExpressionAttributeValues: {
                   ":val": { N: "20" },
                   ":status": { S: "active" },
@@ -307,7 +341,10 @@ describe("Two-Phase Commit Protocol", () => {
       );
 
       const result = await client.send(
-        new GetItemCommand({ TableName: tableName, Key: { id: { S: "item1" } } })
+        new GetItemCommand({
+          TableName: tableName,
+          Key: { id: { S: "item1" } },
+        })
       );
       expect(result.Item?.count!.N).toBe("20");
     });
@@ -355,7 +392,10 @@ describe("Two-Phase Commit Protocol", () => {
       );
 
       const result = await client.send(
-        new GetItemCommand({ TableName: tableName, Key: { id: { S: "item1" } } })
+        new GetItemCommand({
+          TableName: tableName,
+          Key: { id: { S: "item1" } },
+        })
       );
       expect(result.Item?.status!.S).toBe("active");
     });
@@ -407,9 +447,13 @@ describe("Two-Phase Commit Protocol", () => {
       } catch (error) {
         expect(error).toBeInstanceOf(TransactionCanceledException);
         const txError = error as TransactionCanceledException;
-        expect(txError.CancellationReasons?.[0]?.Code).toBe("ConditionalCheckFailed");
+        expect(txError.CancellationReasons?.[0]?.Code).toBe(
+          "ConditionalCheckFailed"
+        );
         expect(txError.CancellationReasons?.[0]?.Item).toBeDefined();
-        expect(txError.CancellationReasons?.[0]?.Item?.value!.S).toBe("original");
+        expect(txError.CancellationReasons?.[0]?.Item?.value!.S).toBe(
+          "original"
+        );
       }
     });
 
@@ -454,7 +498,9 @@ describe("Two-Phase Commit Protocol", () => {
       } catch (error) {
         expect(error).toBeInstanceOf(TransactionCanceledException);
         const txError = error as TransactionCanceledException;
-        expect(txError.CancellationReasons?.[0]?.Code).toBe("ConditionalCheckFailed");
+        expect(txError.CancellationReasons?.[0]?.Code).toBe(
+          "ConditionalCheckFailed"
+        );
         expect(txError.CancellationReasons?.[0]?.Item).toBeUndefined();
       }
     });
@@ -506,7 +552,9 @@ describe("Two-Phase Commit Protocol", () => {
       } catch (error) {
         expect(error).toBeInstanceOf(TransactionCanceledException);
         const txError = error as TransactionCanceledException;
-        expect(txError.CancellationReasons?.[0]?.Item?.status!.S).toBe("inactive");
+        expect(txError.CancellationReasons?.[0]?.Item?.status!.S).toBe(
+          "inactive"
+        );
         expect(txError.CancellationReasons?.[0]?.Item?.data!.S).toBe("secret");
       }
     });
@@ -542,7 +590,8 @@ describe("Two-Phase Commit Protocol", () => {
               Update: {
                 TableName: tableName,
                 Key: { id: { S: "item1" } },
-                UpdateExpression: "SET field1 = :val1, field2 = :val2, field3 = :val3",
+                UpdateExpression:
+                  "SET field1 = :val1, field2 = :val2, field3 = :val3",
                 ExpressionAttributeValues: {
                   ":val1": { S: "new1" },
                   ":val2": { S: "new2" },
@@ -555,7 +604,10 @@ describe("Two-Phase Commit Protocol", () => {
       );
 
       const result = await client.send(
-        new GetItemCommand({ TableName: tableName, Key: { id: { S: "item1" } } })
+        new GetItemCommand({
+          TableName: tableName,
+          Key: { id: { S: "item1" } },
+        })
       );
       expect(result.Item?.field1!.S).toBe("new1");
       expect(result.Item?.field2!.S).toBe("new2");
@@ -600,7 +652,10 @@ describe("Two-Phase Commit Protocol", () => {
       );
 
       const result = await client.send(
-        new GetItemCommand({ TableName: tableName, Key: { id: { S: "item1" } } })
+        new GetItemCommand({
+          TableName: tableName,
+          Key: { id: { S: "item1" } },
+        })
       );
       expect(result.Item?.field1).toBeUndefined();
       expect(result.Item?.field2).toBeUndefined();
@@ -642,7 +697,10 @@ describe("Two-Phase Commit Protocol", () => {
       );
 
       const result = await client.send(
-        new GetItemCommand({ TableName: tableName, Key: { id: { S: "item1" } } })
+        new GetItemCommand({
+          TableName: tableName,
+          Key: { id: { S: "item1" } },
+        })
       );
       expect(result.Item?.count!.N).toBe("5");
     });
@@ -677,9 +735,16 @@ describe("Two-Phase Commit Protocol", () => {
               Update: {
                 TableName: tableName,
                 Key: { id: { S: "item1" } },
-                UpdateExpression: "SET #status = :status ADD #count :inc REMOVE removeMe",
-                ExpressionAttributeNames: { "#status": "status", "#count": "count" },
-                ExpressionAttributeValues: { ":status": { S: "new" }, ":inc": { N: "5" } },
+                UpdateExpression:
+                  "SET #status = :status ADD #count :inc REMOVE removeMe",
+                ExpressionAttributeNames: {
+                  "#status": "status",
+                  "#count": "count",
+                },
+                ExpressionAttributeValues: {
+                  ":status": { S: "new" },
+                  ":inc": { N: "5" },
+                },
               },
             },
           ],
@@ -687,7 +752,10 @@ describe("Two-Phase Commit Protocol", () => {
       );
 
       const result = await client.send(
-        new GetItemCommand({ TableName: tableName, Key: { id: { S: "item1" } } })
+        new GetItemCommand({
+          TableName: tableName,
+          Key: { id: { S: "item1" } },
+        })
       );
       expect(result.Item?.status!.S).toBe("new");
       expect(result.Item?.count!.N).toBe("15");
@@ -722,7 +790,10 @@ describe("Two-Phase Commit Protocol", () => {
       );
 
       const result = await client.send(
-        new GetItemCommand({ TableName: tableName, Key: { id: { S: "new-item" } } })
+        new GetItemCommand({
+          TableName: tableName,
+          Key: { id: { S: "new-item" } },
+        })
       );
       expect(result.Item?.id!.S).toBe("new-item");
       expect(result.Item?.value!.S).toBe("created");
@@ -757,7 +828,9 @@ describe("Two-Phase Commit Protocol", () => {
         },
       }));
 
-      await client.send(new TransactWriteItemsCommand({ TransactItems: items }));
+      await client.send(
+        new TransactWriteItemsCommand({ TransactItems: items })
+      );
 
       // Verify all items were created
       for (const id of itemIds) {
@@ -809,7 +882,10 @@ describe("Two-Phase Commit Protocol", () => {
                   Key: { id: { S: "existing" } },
                   UpdateExpression: "SET #status = :val",
                   ExpressionAttributeNames: { "#status": "status" },
-                  ExpressionAttributeValues: { ":val": { S: "updated" }, ":wrong": { S: "wrong" } },
+                  ExpressionAttributeValues: {
+                    ":val": { S: "updated" },
+                    ":wrong": { S: "wrong" },
+                  },
                   ConditionExpression: "#status = :wrong",
                 },
               },
@@ -829,16 +905,28 @@ describe("Two-Phase Commit Protocol", () => {
 
       // Verify none of the new items were created
       const result1 = await client.send(
-        new GetItemCommand({ TableName: tableName, Key: { id: { S: "new-1" } } })
+        new GetItemCommand({
+          TableName: tableName,
+          Key: { id: { S: "new-1" } },
+        })
       );
       const result2 = await client.send(
-        new GetItemCommand({ TableName: tableName, Key: { id: { S: "new-2" } } })
+        new GetItemCommand({
+          TableName: tableName,
+          Key: { id: { S: "new-2" } },
+        })
       );
       const result3 = await client.send(
-        new GetItemCommand({ TableName: tableName, Key: { id: { S: "new-3" } } })
+        new GetItemCommand({
+          TableName: tableName,
+          Key: { id: { S: "new-3" } },
+        })
       );
       const existing = await client.send(
-        new GetItemCommand({ TableName: tableName, Key: { id: { S: "existing" } } })
+        new GetItemCommand({
+          TableName: tableName,
+          Key: { id: { S: "existing" } },
+        })
       );
 
       expect(result1.Item).toBeUndefined();
@@ -878,7 +966,10 @@ describe("Two-Phase Commit Protocol", () => {
       );
 
       let result = await client.send(
-        new GetItemCommand({ TableName: tableName, Key: { id: { S: "idempotent-item" } } })
+        new GetItemCommand({
+          TableName: tableName,
+          Key: { id: { S: "idempotent-item" } },
+        })
       );
       expect(result.Item?.value!.S).toBe("first");
 
@@ -907,7 +998,10 @@ describe("Two-Phase Commit Protocol", () => {
 
       // Item should still be "modified" (transaction was not re-executed)
       result = await client.send(
-        new GetItemCommand({ TableName: tableName, Key: { id: { S: "idempotent-item" } } })
+        new GetItemCommand({
+          TableName: tableName,
+          Key: { id: { S: "idempotent-item" } },
+        })
       );
       expect(result.Item?.value!.S).toBe("modified");
     });
@@ -965,7 +1059,10 @@ describe("Two-Phase Commit Protocol", () => {
       );
 
       const result = await client.send(
-        new GetItemCommand({ TableName: tableName, Key: { id: { S: "item-tokens" } } })
+        new GetItemCommand({
+          TableName: tableName,
+          Key: { id: { S: "item-tokens" } },
+        })
       );
       expect(result.Item?.counter!.N).toBe("1"); // Overwritten by second transaction
     });
@@ -1001,7 +1098,10 @@ describe("Two-Phase Commit Protocol", () => {
                   Key: { id: { S: "item1" } },
                   UpdateExpression: "SET #status = :val",
                   ExpressionAttributeNames: { "#status": "status" },
-                  ExpressionAttributeValues: { ":val": { S: "updated" }, ":wrong": { S: "wrong" } },
+                  ExpressionAttributeValues: {
+                    ":val": { S: "updated" },
+                    ":wrong": { S: "wrong" },
+                  },
                   ConditionExpression: "#status = :wrong",
                 },
               },
@@ -1025,7 +1125,10 @@ describe("Two-Phase Commit Protocol", () => {
                   Key: { id: { S: "item1" } },
                   UpdateExpression: "SET #status = :val",
                   ExpressionAttributeNames: { "#status": "status" },
-                  ExpressionAttributeValues: { ":val": { S: "updated" }, ":wrong": { S: "wrong" } },
+                  ExpressionAttributeValues: {
+                    ":val": { S: "updated" },
+                    ":wrong": { S: "wrong" },
+                  },
                   ConditionExpression: "#status = :wrong",
                 },
               },
@@ -1076,7 +1179,10 @@ describe("Two-Phase Commit Protocol", () => {
       );
 
       const result = await client.send(
-        new GetItemCommand({ TableName: tableName, Key: { id: { S: "item1" } } })
+        new GetItemCommand({
+          TableName: tableName,
+          Key: { id: { S: "item1" } },
+        })
       );
       expect(result.Item?.value!.S).toBe("updated");
     });
@@ -1106,7 +1212,10 @@ describe("Two-Phase Commit Protocol", () => {
       );
 
       const result = await client.send(
-        new GetItemCommand({ TableName: tableName, Key: { id: { S: "single-item" } } })
+        new GetItemCommand({
+          TableName: tableName,
+          Key: { id: { S: "single-item" } },
+        })
       );
       expect(result.Item?.value!.S).toBe("solo");
     });
@@ -1163,7 +1272,10 @@ describe("Two-Phase Commit Protocol", () => {
       );
 
       const result = await client.send(
-        new GetItemCommand({ TableName: tableName, Key: { id: { S: "new-item" } } })
+        new GetItemCommand({
+          TableName: tableName,
+          Key: { id: { S: "new-item" } },
+        })
       );
       expect(result.Item?.value!.S).toBe("value");
     });
@@ -1206,7 +1318,10 @@ describe("Two-Phase Commit Protocol", () => {
       );
 
       const result = await client.send(
-        new GetItemCommand({ TableName: tableName, Key: { id: { S: "item1" } } })
+        new GetItemCommand({
+          TableName: tableName,
+          Key: { id: { S: "item1" } },
+        })
       );
       expect(result.Item?.["special-attr"]!.S).toBe("updated");
     });
@@ -1251,7 +1366,9 @@ describe("Two-Phase Commit Protocol", () => {
       expect(result.Responses!.length).toBe(5);
       for (let i = 0; i < itemIds.length; i++) {
         expect(result.Responses![i]!.Item?.id!.S).toBe(itemIds[i]);
-        expect(result.Responses![i]!.Item?.value!.S).toBe(`value-${itemIds[i]}`);
+        expect(result.Responses![i]!.Item?.value!.S).toBe(
+          `value-${itemIds[i]}`
+        );
       }
     });
 
@@ -1364,8 +1481,15 @@ describe("Two-Phase Commit Protocol", () => {
         new TransactGetItemsCommand({
           TransactItems: [
             { Get: { TableName: tableName, Key: { id: { S: "exists" } } } },
-            { Get: { TableName: tableName, Key: { id: { S: "does-not-exist" } } } },
-            { Get: { TableName: tableName, Key: { id: { S: "also-missing" } } } },
+            {
+              Get: {
+                TableName: tableName,
+                Key: { id: { S: "does-not-exist" } },
+              },
+            },
+            {
+              Get: { TableName: tableName, Key: { id: { S: "also-missing" } } },
+            },
           ],
         })
       );
@@ -1398,7 +1522,9 @@ describe("Two-Phase Commit Protocol", () => {
       }
 
       try {
-        await client.send(new TransactGetItemsCommand({ TransactItems: items }));
+        await client.send(
+          new TransactGetItemsCommand({ TransactItems: items })
+        );
         expect(true).toBe(false);
       } catch (error: any) {
         expect(error.message).toContain("100");
@@ -1439,7 +1565,10 @@ describe("Two-Phase Commit Protocol", () => {
                 TableName: tableName,
                 Key: { id: { S: "workflow-1" } },
                 UpdateExpression: "SET #state = :processing ADD #retries :inc",
-                ExpressionAttributeNames: { "#state": "state", "#retries": "retries" },
+                ExpressionAttributeNames: {
+                  "#state": "state",
+                  "#retries": "retries",
+                },
                 ExpressionAttributeValues: {
                   ":processing": { S: "processing" },
                   ":inc": { N: "1" },
@@ -1453,7 +1582,10 @@ describe("Two-Phase Commit Protocol", () => {
       );
 
       const result = await client.send(
-        new GetItemCommand({ TableName: tableName, Key: { id: { S: "workflow-1" } } })
+        new GetItemCommand({
+          TableName: tableName,
+          Key: { id: { S: "workflow-1" } },
+        })
       );
       expect(result.Item?.state!.S).toBe("processing");
       expect(result.Item?.retries!.N).toBe("1");
@@ -1501,7 +1633,10 @@ describe("Two-Phase Commit Protocol", () => {
                 Key: { id: { S: "product-123" } },
                 UpdateExpression: "SET #stock = :newStock",
                 ExpressionAttributeNames: { "#stock": "stock" },
-                ExpressionAttributeValues: { ":newStock": { N: "7" }, ":min": { N: "3" } },
+                ExpressionAttributeValues: {
+                  ":newStock": { N: "7" },
+                  ":min": { N: "3" },
+                },
                 ConditionExpression: "#stock > :min", // Prevent negative inventory
               },
             },
@@ -1519,10 +1654,16 @@ describe("Two-Phase Commit Protocol", () => {
       );
 
       const product = await client.send(
-        new GetItemCommand({ TableName: tableName, Key: { id: { S: "product-123" } } })
+        new GetItemCommand({
+          TableName: tableName,
+          Key: { id: { S: "product-123" } },
+        })
       );
       const order = await client.send(
-        new GetItemCommand({ TableName: tableName, Key: { id: { S: "order-456" } } })
+        new GetItemCommand({
+          TableName: tableName,
+          Key: { id: { S: "order-456" } },
+        })
       );
 
       expect(product.Item?.stock!.N).toBe("7");
@@ -1570,7 +1711,10 @@ describe("Two-Phase Commit Protocol", () => {
                   Key: { id: { S: "product-999" } },
                   UpdateExpression: "SET #stock = :newStock",
                   ExpressionAttributeNames: { "#stock": "stock" },
-                  ExpressionAttributeValues: { ":newStock": { N: "-3" }, ":min": { N: "3" } },
+                  ExpressionAttributeValues: {
+                    ":newStock": { N: "-3" },
+                    ":min": { N: "3" },
+                  },
                   ConditionExpression: "#stock > :min", // Will fail: 2 is not > 3
                 },
               },
@@ -1580,7 +1724,9 @@ describe("Two-Phase Commit Protocol", () => {
                   Key: { id: { S: "order-999" } },
                   UpdateExpression: "SET #status = :confirmed",
                   ExpressionAttributeNames: { "#status": "status" },
-                  ExpressionAttributeValues: { ":confirmed": { S: "confirmed" } },
+                  ExpressionAttributeValues: {
+                    ":confirmed": { S: "confirmed" },
+                  },
                 },
               },
             ],
@@ -1593,10 +1739,16 @@ describe("Two-Phase Commit Protocol", () => {
 
       // Verify nothing changed
       const product = await client.send(
-        new GetItemCommand({ TableName: tableName, Key: { id: { S: "product-999" } } })
+        new GetItemCommand({
+          TableName: tableName,
+          Key: { id: { S: "product-999" } },
+        })
       );
       const order = await client.send(
-        new GetItemCommand({ TableName: tableName, Key: { id: { S: "order-999" } } })
+        new GetItemCommand({
+          TableName: tableName,
+          Key: { id: { S: "order-999" } },
+        })
       );
 
       expect(product.Item?.stock!.N).toBe("2"); // Unchanged

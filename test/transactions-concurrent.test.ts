@@ -18,7 +18,9 @@ let client: DynamoDBClient;
 
 // Helper to generate unique table names
 function getTableName(): string {
-  return `ConcurrentTest_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+  return `ConcurrentTest_${Date.now()}_${Math.random()
+    .toString(36)
+    .substring(2, 9)}`;
 }
 
 // Helper to generate random int between min and max (inclusive)
@@ -81,7 +83,12 @@ describe("Concurrent Transaction Tests", () => {
     // Track operations
     let successfulTransfers = 0;
     let failedTransfers = 0;
-    const transferHistory: Array<{ from: string; to: string; amount: number; success: boolean }> = [];
+    const transferHistory: Array<{
+      from: string;
+      to: string;
+      amount: number;
+      success: boolean;
+    }> = [];
 
     // Worker function: performs random transfers
     async function worker(workerId: number, numTransfers: number) {
@@ -100,10 +107,16 @@ describe("Concurrent Transaction Tests", () => {
         try {
           // Read current balances
           const fromResult = await client.send(
-            new GetItemCommand({ TableName: tableName, Key: { id: { S: fromAccount } } })
+            new GetItemCommand({
+              TableName: tableName,
+              Key: { id: { S: fromAccount } },
+            })
           );
           const toResult = await client.send(
-            new GetItemCommand({ TableName: tableName, Key: { id: { S: toAccount } } })
+            new GetItemCommand({
+              TableName: tableName,
+              Key: { id: { S: toAccount } },
+            })
           );
 
           if (!fromResult.Item || !toResult.Item) continue;
@@ -113,7 +126,12 @@ describe("Concurrent Transaction Tests", () => {
 
           if (fromBalance < amount) {
             failedTransfers++;
-            transferHistory.push({ from: fromAccount, to: toAccount, amount, success: false });
+            transferHistory.push({
+              from: fromAccount,
+              to: toAccount,
+              amount,
+              success: false,
+            });
             continue;
           }
 
@@ -153,11 +171,21 @@ describe("Concurrent Transaction Tests", () => {
           );
 
           successfulTransfers++;
-          transferHistory.push({ from: fromAccount, to: toAccount, amount, success: true });
+          transferHistory.push({
+            from: fromAccount,
+            to: toAccount,
+            amount,
+            success: true,
+          });
         } catch (error) {
           if (error instanceof TransactionCanceledException) {
             failedTransfers++;
-            transferHistory.push({ from: fromAccount, to: toAccount, amount, success: false });
+            transferHistory.push({
+              from: fromAccount,
+              to: toAccount,
+              amount,
+              success: false,
+            });
           } else {
             throw error;
           }
@@ -170,7 +198,9 @@ describe("Concurrent Transaction Tests", () => {
     const startTime = Date.now();
 
     await Promise.all(
-      Array.from({ length: CONCURRENT_WORKERS }, (_, i) => worker(i, transfersPerWorker))
+      Array.from({ length: CONCURRENT_WORKERS }, (_, i) =>
+        worker(i, transfersPerWorker)
+      )
     );
 
     const duration = Date.now() - startTime;
@@ -181,7 +211,10 @@ describe("Concurrent Transaction Tests", () => {
 
     for (const accountId of accountIds) {
       const result = await client.send(
-        new GetItemCommand({ TableName: tableName, Key: { id: { S: accountId } } })
+        new GetItemCommand({
+          TableName: tableName,
+          Key: { id: { S: accountId } },
+        })
       );
       if (result.Item) {
         const balance = parseInt(result.Item.balance!.N!);
@@ -194,7 +227,11 @@ describe("Concurrent Transaction Tests", () => {
       console.log(`Successful transfers: ${successfulTransfers}`);
       console.log(`Failed transfers: ${failedTransfers}`);
       console.log(`Duration: ${duration}ms`);
-      console.log(`Throughput: ${((successfulTransfers / duration) * 1000).toFixed(2)} transfers/sec`);
+      console.log(
+        `Throughput: ${((successfulTransfers / duration) * 1000).toFixed(
+          2
+        )} transfers/sec`
+      );
     }
 
     // The critical invariant: total money in system must remain constant
@@ -257,7 +294,10 @@ describe("Concurrent Transaction Tests", () => {
         try {
           // Read current value
           const result = await client.send(
-            new GetItemCommand({ TableName: tableName, Key: { id: { S: counterId } } })
+            new GetItemCommand({
+              TableName: tableName,
+              Key: { id: { S: counterId } },
+            })
           );
           if (!result.Item) continue;
 
@@ -311,7 +351,8 @@ describe("Concurrent Transaction Tests", () => {
     // Aggregate expected increments
     for (const localIncrements of results) {
       for (const [counterId, count] of Object.entries(localIncrements)) {
-        expectedIncrements[counterId] = (expectedIncrements[counterId] || 0) + count;
+        expectedIncrements[counterId] =
+          (expectedIncrements[counterId] || 0) + count;
       }
     }
 
@@ -322,7 +363,10 @@ describe("Concurrent Transaction Tests", () => {
 
     for (const counterId of counterIds) {
       const result = await client.send(
-        new GetItemCommand({ TableName: tableName, Key: { id: { S: counterId } } })
+        new GetItemCommand({
+          TableName: tableName,
+          Key: { id: { S: counterId } },
+        })
       );
       if (result.Item) {
         const actualCount = parseInt(result.Item.count!.N!);
@@ -338,7 +382,11 @@ describe("Concurrent Transaction Tests", () => {
       console.log(`Total increments: ${totalActual}`);
       console.log(`Total retries: ${totalRetries}`);
       console.log(`Duration: ${duration}ms`);
-      console.log(`Throughput: ${((totalActual / duration) * 1000).toFixed(2)} increments/sec`);
+      console.log(
+        `Throughput: ${((totalActual / duration) * 1000).toFixed(
+          2
+        )} increments/sec`
+      );
     }
 
     expect(totalActual).toBe(totalExpected);
@@ -399,8 +447,12 @@ describe("Concurrent Transaction Tests", () => {
                   Update: {
                     TableName: tableName,
                     Key: { id: { S: itemId } },
-                    UpdateExpression: "SET #owner = :worker, #status = :claimed",
-                    ExpressionAttributeNames: { "#owner": "owner", "#status": "status" },
+                    UpdateExpression:
+                      "SET #owner = :worker, #status = :claimed",
+                    ExpressionAttributeNames: {
+                      "#owner": "owner",
+                      "#status": "status",
+                    },
                     ExpressionAttributeValues: {
                       ":worker": { S: `worker-${workerId}` },
                       ":claimed": { S: "claimed" },
@@ -486,7 +538,11 @@ describe("Concurrent Transaction Tests", () => {
 
     // Track all items that should exist if transaction succeeded
     const expectedItems = new Set<string>();
-    const transactionResults: Array<{ id: string; success: boolean; items: string[] }> = [];
+    const transactionResults: Array<{
+      id: string;
+      success: boolean;
+      items: string[];
+    }> = [];
 
     // Worker function: create multi-item transactions
     async function worker(workerId: number, numOps: number) {
@@ -528,7 +584,11 @@ describe("Concurrent Transaction Tests", () => {
         } catch (error) {
           if (error instanceof TransactionCanceledException) {
             // Failure - none of the items should exist
-            transactionResults.push({ id: txId, success: false, items: itemIds });
+            transactionResults.push({
+              id: txId,
+              success: false,
+              items: itemIds,
+            });
           } else {
             throw error;
           }
@@ -540,7 +600,9 @@ describe("Concurrent Transaction Tests", () => {
     const opsPerWorker = Math.floor(NUM_OPERATIONS / NUM_WORKERS);
     const startTime = Date.now();
 
-    await Promise.all(Array.from({ length: NUM_WORKERS }, (_, i) => worker(i, opsPerWorker)));
+    await Promise.all(
+      Array.from({ length: NUM_WORKERS }, (_, i) => worker(i, opsPerWorker))
+    );
 
     const duration = Date.now() - startTime;
 
@@ -554,7 +616,10 @@ describe("Concurrent Transaction Tests", () => {
 
       for (const itemId of tx.items) {
         const result = await client.send(
-          new GetItemCommand({ TableName: tableName, Key: { id: { S: itemId } } })
+          new GetItemCommand({
+            TableName: tableName,
+            Key: { id: { S: itemId } },
+          })
         );
         if (result.Item) existingItems++;
       }
@@ -627,7 +692,11 @@ describe("Concurrent Transaction Tests", () => {
     }
 
     // Track operations
-    const operations: Array<{ type: "read" | "write"; itemId: string; success: boolean }> = [];
+    const operations: Array<{
+      type: "read" | "write";
+      itemId: string;
+      success: boolean;
+    }> = [];
 
     // Worker function: mix of reads and writes
     async function worker(workerId: number, numOps: number) {
@@ -639,7 +708,10 @@ describe("Concurrent Transaction Tests", () => {
           // Read-modify-write with optimistic locking
           try {
             const result = await client.send(
-              new GetItemCommand({ TableName: tableName, Key: { id: { S: itemId } } })
+              new GetItemCommand({
+                TableName: tableName,
+                Key: { id: { S: itemId } },
+              })
             );
             if (!result.Item) continue;
 
@@ -653,8 +725,12 @@ describe("Concurrent Transaction Tests", () => {
                     Update: {
                       TableName: tableName,
                       Key: { id: { S: itemId } },
-                      UpdateExpression: "SET #version = :newVersion, #data = :data",
-                      ExpressionAttributeNames: { "#version": "version", "#data": "data" },
+                      UpdateExpression:
+                        "SET #version = :newVersion, #data = :data",
+                      ExpressionAttributeNames: {
+                        "#version": "version",
+                        "#data": "data",
+                      },
                       ExpressionAttributeValues: {
                         ":newVersion": { N: String(newVersion) },
                         ":data": { S: `worker-${workerId}-v${newVersion}` },
@@ -680,11 +756,17 @@ describe("Concurrent Transaction Tests", () => {
           try {
             const result = await client.send(
               new TransactGetItemsCommand({
-                TransactItems: [{ Get: { TableName: tableName, Key: { id: { S: itemId } } } }],
+                TransactItems: [
+                  { Get: { TableName: tableName, Key: { id: { S: itemId } } } },
+                ],
               })
             );
 
-            if (result.Responses && result.Responses[0] && result.Responses[0].Item) {
+            if (
+              result.Responses &&
+              result.Responses[0] &&
+              result.Responses[0].Item
+            ) {
               const item = result.Responses[0].Item;
               // Verify version and data are consistent
               const version = parseInt(item.version!.N!);
@@ -708,14 +790,22 @@ describe("Concurrent Transaction Tests", () => {
     const opsPerWorker = Math.floor(NUM_OPERATIONS / NUM_WORKERS);
     const startTime = Date.now();
 
-    await Promise.all(Array.from({ length: NUM_WORKERS }, (_, i) => worker(i, opsPerWorker)));
+    await Promise.all(
+      Array.from({ length: NUM_WORKERS }, (_, i) => worker(i, opsPerWorker))
+    );
 
     const duration = Date.now() - startTime;
 
     // Analyze results
-    const successfulReads = operations.filter((op) => op.type === "read" && op.success).length;
-    const successfulWrites = operations.filter((op) => op.type === "write" && op.success).length;
-    const failedWrites = operations.filter((op) => op.type === "write" && !op.success).length;
+    const successfulReads = operations.filter(
+      (op) => op.type === "read" && op.success
+    ).length;
+    const successfulWrites = operations.filter(
+      (op) => op.type === "write" && op.success
+    ).length;
+    const failedWrites = operations.filter(
+      (op) => op.type === "write" && !op.success
+    ).length;
 
     if (VERBOSE) {
       console.log(`Successful reads: ${successfulReads}`);
