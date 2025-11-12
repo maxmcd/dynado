@@ -3,7 +3,10 @@
 import { expressionLexer } from "./lexer.ts";
 import { keyConditionParser } from "./key-condition-parser.ts";
 import { keyConditionVisitor, type KeyConditionAST } from "./key-condition-visitor.ts";
-import type { DynamoDBItem, DynamoDBAttributeValue } from "../types.ts";
+import type { DynamoDBItem } from "../types.ts";
+
+// DynamoDB attribute value type
+type DynamoDBAttributeValue = any;
 
 function resolveAttributeName(
   name: string,

@@ -99,8 +99,8 @@ describe("Range Queries", () => {
     expect(result.Items!.length).toBe(5);
     expect(result.Count).toBe(5);
     // Items should be in ascending order by default
-    expect(result.Items![0]!.timestamp.N).toBe("100");
-    expect(result.Items![4]!.timestamp.N).toBe("500");
+    expect(result.Items![0]!.timestamp!.N).toBe("100");
+    expect(result.Items![4]!.timestamp!.N).toBe("500");
   });
 
   test("should query with = operator", async () => {
@@ -119,8 +119,8 @@ describe("Range Queries", () => {
     );
 
     expect(result.Items!.length).toBe(1);
-    expect(result.Items![0]!.timestamp.N).toBe("300");
-    expect(result.Items![0]!.data.S).toBe("c");
+    expect(result.Items![0]!.timestamp!.N).toBe("300");
+    expect(result.Items![0]!.data!.S).toBe("c");
   });
 
   test("should query with < operator", async () => {
@@ -139,8 +139,8 @@ describe("Range Queries", () => {
     );
 
     expect(result.Items!.length).toBe(2);
-    expect(result.Items![0]!.timestamp.N).toBe("100");
-    expect(result.Items![1]!.timestamp.N).toBe("200");
+    expect(result.Items![0]!.timestamp!.N).toBe("100");
+    expect(result.Items![1]!.timestamp!.N).toBe("200");
   });
 
   test("should query with > operator", async () => {
@@ -159,8 +159,8 @@ describe("Range Queries", () => {
     );
 
     expect(result.Items!.length).toBe(2);
-    expect(result.Items![0]!.timestamp.N).toBe("400");
-    expect(result.Items![1]!.timestamp.N).toBe("500");
+    expect(result.Items![0]!.timestamp!.N).toBe("400");
+    expect(result.Items![1]!.timestamp!.N).toBe("500");
   });
 
   test("should query with <= operator", async () => {
@@ -179,9 +179,9 @@ describe("Range Queries", () => {
     );
 
     expect(result.Items!.length).toBe(3);
-    expect(result.Items![0]!.timestamp.N).toBe("100");
-    expect(result.Items![1]!.timestamp.N).toBe("200");
-    expect(result.Items![2]!.timestamp.N).toBe("300");
+    expect(result.Items![0]!.timestamp!.N).toBe("100");
+    expect(result.Items![1]!.timestamp!.N).toBe("200");
+    expect(result.Items![2]!.timestamp!.N).toBe("300");
   });
 
   test("should query with >= operator", async () => {
@@ -200,9 +200,9 @@ describe("Range Queries", () => {
     );
 
     expect(result.Items!.length).toBe(3);
-    expect(result.Items![0]!.timestamp.N).toBe("300");
-    expect(result.Items![1]!.timestamp.N).toBe("400");
-    expect(result.Items![2]!.timestamp.N).toBe("500");
+    expect(result.Items![0]!.timestamp!.N).toBe("300");
+    expect(result.Items![1]!.timestamp!.N).toBe("400");
+    expect(result.Items![2]!.timestamp!.N).toBe("500");
   });
 
   test("should query with BETWEEN operator", async () => {
@@ -223,9 +223,9 @@ describe("Range Queries", () => {
     );
 
     expect(result.Items!.length).toBe(3);
-    expect(result.Items![0]!.timestamp.N).toBe("200");
-    expect(result.Items![1]!.timestamp.N).toBe("300");
-    expect(result.Items![2]!.timestamp.N).toBe("400");
+    expect(result.Items![0]!.timestamp!.N).toBe("200");
+    expect(result.Items![1]!.timestamp!.N).toBe("300");
+    expect(result.Items![2]!.timestamp!.N).toBe("400");
   });
 
   test("should query with begins_with operator", async () => {
@@ -299,9 +299,9 @@ describe("Range Queries", () => {
     );
 
     expect(result.Items!.length).toBe(3);
-    expect(result.Items![0]!.itemId.S).toBe("PROD-001");
-    expect(result.Items![1]!.itemId.S).toBe("PROD-002");
-    expect(result.Items![2]!.itemId.S).toBe("PROD-003");
+    expect(result.Items![0]!.itemId!.S).toBe("PROD-001");
+    expect(result.Items![1]!.itemId!.S).toBe("PROD-002");
+    expect(result.Items![2]!.itemId!.S).toBe("PROD-003");
   });
 
   test("should support descending order with ScanIndexForward=false", async () => {
@@ -318,8 +318,8 @@ describe("Range Queries", () => {
 
     expect(result.Items!.length).toBe(5);
     // Items should be in descending order
-    expect(result.Items![0]!.timestamp.N).toBe("500");
-    expect(result.Items![4]!.timestamp.N).toBe("100");
+    expect(result.Items![0]!.timestamp!.N).toBe("500");
+    expect(result.Items![4]!.timestamp!.N).toBe("100");
   });
 
   test("should support pagination with Limit", async () => {
@@ -335,8 +335,8 @@ describe("Range Queries", () => {
     );
 
     expect(result.Items!.length).toBe(2);
-    expect(result.Items![0]!.timestamp.N).toBe("100");
-    expect(result.Items![1]!.timestamp.N).toBe("200");
+    expect(result.Items![0]!.timestamp!.N).toBe("100");
+    expect(result.Items![1]!.timestamp!.N).toBe("200");
     expect(result.LastEvaluatedKey).toBeDefined();
   });
 
@@ -369,8 +369,8 @@ describe("Range Queries", () => {
     );
 
     expect(result2.Items!.length).toBe(2);
-    expect(result2.Items![0]!.timestamp.N).toBe("300");
-    expect(result2.Items![1]!.timestamp.N).toBe("400");
+    expect(result2.Items![0]!.timestamp!.N).toBe("300");
+    expect(result2.Items![1]!.timestamp!.N).toBe("400");
   });
 
   test("should isolate queries by partition key", async () => {
@@ -399,10 +399,10 @@ describe("Range Queries", () => {
 
     // Verify all items have correct userId
     for (const item of result1.Items!) {
-      expect(item.userId.S).toBe("user1");
+      expect(item!.userId!.S).toBe("user1");
     }
     for (const item of result2.Items!) {
-      expect(item.userId.S).toBe("user2");
+      expect(item!.userId!.S).toBe("user2");
     }
   });
 
@@ -443,8 +443,8 @@ describe("Range Queries", () => {
     );
 
     expect(result.Items!.length).toBe(2);
-    expect(result.Items![0]!.timestamp.N).toBe("200");
-    expect(result.Items![1]!.timestamp.N).toBe("300");
+    expect(result.Items![0]!.timestamp!.N).toBe("200");
+    expect(result.Items![1]!.timestamp!.N).toBe("300");
     expect(result.LastEvaluatedKey).toBeDefined();
   });
 });

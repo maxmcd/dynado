@@ -9,7 +9,6 @@ import type {
   TransactionRecord,
   CancellationReason,
   PrepareRequest,
-  PrepareResponse,
   CommitRequest,
   ReleaseRequest,
 } from "./types.ts";
@@ -174,7 +173,12 @@ export class TransactionCoordinator {
 
       // PHASE 2: COMMIT
       // This phase MUST complete - retry indefinitely on failure
-      await this.commitAllShards(shardOperations, shards, transactionId, timestamp);
+      await this.commitAllShards(
+        shardOperations,
+        shards,
+        transactionId,
+        timestamp
+      );
 
       // Mark as committed
       this.updateTransactionState(transactionId, "COMMITTED");
@@ -232,7 +236,10 @@ export class TransactionCoordinator {
         item.tableName,
         item.key
       );
-      const shardIndex = getShardIndex(keyValues.partitionKeyValue, shards.length);
+      const shardIndex = getShardIndex(
+        keyValues.partitionKeyValue,
+        shards.length
+      );
       const shard = shards[shardIndex];
 
       if (!shard) {
@@ -332,7 +339,8 @@ export class TransactionCoordinator {
         key = item.ConditionCheck.key;
         conditionExpression = item.ConditionCheck.conditionExpression;
         expressionAttributeNames = item.ConditionCheck.expressionAttributeNames;
-        expressionAttributeValues = item.ConditionCheck.expressionAttributeValues;
+        expressionAttributeValues =
+          item.ConditionCheck.expressionAttributeValues;
         returnValuesOnConditionCheckFailure =
           item.ConditionCheck.returnValuesOnConditionCheckFailure;
       } else {
@@ -427,8 +435,8 @@ export class TransactionCoordinator {
             // 3. Coordinator recovery process would pick this up
             const err = new Error(
               `Failed to commit transaction ${transactionId} on shard ${op.shardIndex} after ${MAX_RETRIES} retries. ` +
-              `Transaction is in COMMITTING state and requires manual recovery. ` +
-              `Original error: ${lastError.message}`
+                `Transaction is in COMMITTING state and requires manual recovery. ` +
+                `Original error: ${lastError?.message || "Unknown error"}`
             );
             // Record this failed commit for recovery
             this.recordFailedCommit(transactionId, op.shardIndex, err);
@@ -444,11 +452,15 @@ export class TransactionCoordinator {
   }
 
   // Record failed commits for recovery (in production, would use separate recovery table)
-  private recordFailedCommit(transactionId: string, shardIndex: number, error: Error): void {
+  private recordFailedCommit(
+    transactionId: string,
+    shardIndex: number,
+    error: Error
+  ): void {
     // Log for now - in production would write to recovery queue
     console.error(
       `CRITICAL: Transaction ${transactionId} failed to commit on shard ${shardIndex}. ` +
-      `This requires manual intervention or automated recovery. Error: ${error.message}`
+        `This requires manual intervention or automated recovery. Error: ${error.message}`
     );
 
     // Update transaction state to indicate partial commit
@@ -460,7 +472,10 @@ export class TransactionCoordinator {
         [Date.now(), transactionId]
       );
     } catch (dbError) {
-      console.error(`Failed to update transaction ledger for ${transactionId}:`, dbError);
+      console.error(
+        `Failed to update transaction ledger for ${transactionId}:`,
+        dbError
+      );
     }
   }
 
@@ -477,7 +492,14 @@ export class TransactionCoordinator {
     // Group release requests by shard
     const releaseByShardMap = new Map<
       number,
-      { tableName: string; keys: DynamoDBItem[]; keyValues: Array<{ partitionKeyValue: string; sortKeyValue: string | null }> }
+      {
+        tableName: string;
+        keys: DynamoDBItem[];
+        keyValues: Array<{
+          partitionKeyValue: string;
+          sortKeyValue: string;
+        }>;
+      }
     >();
 
     for (const op of operations) {

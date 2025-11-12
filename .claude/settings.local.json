@@ -11,7 +11,8 @@
       "Bash(go mod tidy:*)",
       "Bash(go test:*)",
       "Bash(sqlite3:*)",
-      "Bash(TEST_DYNAMODB_LOCAL=true bun test:*)"
+      "Bash(TEST_DYNAMODB_LOCAL=true bun test:*)",
+      "Bash(npx tsc:*)"
     ],
     "deny": [],
     "ask": []

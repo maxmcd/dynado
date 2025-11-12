@@ -114,7 +114,10 @@ export interface PrepareRequest {
 
 export interface PrepareResponse {
   accepted: boolean;
-  reason?: "ConditionalCheckFailed" | "TransactionConflict" | "TimestampConflict";
+  reason?:
+    | "ConditionalCheckFailed"
+    | "TransactionConflict"
+    | "TimestampConflict";
   message?: string;
   lsn?: number; // For read validation in Phase 2
   item?: DynamoDBItem; // Returned when returnValuesOnConditionCheckFailure is set

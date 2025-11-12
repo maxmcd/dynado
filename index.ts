@@ -398,7 +398,7 @@ export class DB {
     }
 
     // Build filter function from KeyConditionExpression using proper parser
-    let keyCondition = (item: DynamoDBItem) => true;
+    let keyCondition = (_item: DynamoDBItem) => true;
 
     if (KeyConditionExpression) {
       keyCondition = (item: DynamoDBItem) => {

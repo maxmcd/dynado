@@ -1,7 +1,6 @@
 // Visitor to convert KeyCondition CST to AST
 
 import { keyConditionParser } from "./key-condition-parser.ts";
-import type { DynamoDBAttributeValue } from "../types.ts";
 
 const BaseVisitor = keyConditionParser.getBaseCstVisitorConstructor();
 

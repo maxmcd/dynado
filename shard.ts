@@ -9,8 +9,10 @@ import type {
   CommitRequest,
   ReleaseRequest,
 } from "./types.ts";
-import { evaluateConditionExpression } from "./condition-expression.ts";
-import { applyUpdateExpressionToItem } from "./expression-parser/index.ts";
+import {
+  evaluateConditionExpression,
+  applyUpdateExpressionToItem,
+} from "./expression-parser/index.ts";
 
 export class Shard {
   private db: Database;
@@ -58,7 +60,9 @@ export class Shard {
                    FROM items
                    WHERE table_name = ? AND partition_key = ? AND sort_key = ?`;
 
-    const result = this.db.query(query).get(req.tableName, partitionKey, sortKey) as any;
+    const result = this.db
+      .query(query)
+      .get(req.tableName, partitionKey, sortKey) as any;
 
     let currentItem: DynamoDBItem | null = null;
     let currentLsn = 0;
@@ -183,11 +187,13 @@ export class Shard {
       finalItem = req.item!;
     } else {
       // Update operation - apply update expression
-      const result = this.db.query(
-        `SELECT item_data, lsn
+      const result = this.db
+        .query(
+          `SELECT item_data, lsn
          FROM items
          WHERE table_name = ? AND partition_key = ? AND sort_key = ?`
-      ).get(req.tableName, partitionKey, sortKey) as any;
+        )
+        .get(req.tableName, partitionKey, sortKey) as any;
 
       let currentItem = result ? JSON.parse(result.item_data) : { ...req.key };
 
@@ -201,9 +207,11 @@ export class Shard {
     }
 
     // Get current LSN to increment
-    const result = this.db.query(
-      `SELECT lsn FROM items WHERE table_name = ? AND partition_key = ? AND sort_key = ?`
-    ).get(req.tableName, partitionKey, sortKey) as any;
+    const result = this.db
+      .query(
+        `SELECT lsn FROM items WHERE table_name = ? AND partition_key = ? AND sort_key = ?`
+      )
+      .get(req.tableName, partitionKey, sortKey) as any;
 
     const newLsn = result ? result.lsn + 1 : 1;
 
@@ -212,7 +220,14 @@ export class Shard {
       `INSERT OR REPLACE INTO items
        (table_name, partition_key, sort_key, item_data, ongoing_transaction_id, last_update_timestamp, lsn)
        VALUES (?, ?, ?, ?, NULL, ?, ?)`,
-      [req.tableName, partitionKey, sortKey, JSON.stringify(finalItem), req.timestamp, newLsn]
+      [
+        req.tableName,
+        partitionKey,
+        sortKey,
+        JSON.stringify(finalItem),
+        req.timestamp,
+        newLsn,
+      ]
     );
   }
 
@@ -226,9 +241,11 @@ export class Shard {
       const sortKey = keyValue.sortKeyValue;
 
       // Check if item was a placeholder (created during prepare)
-      const result = this.db.query(
-        `SELECT lsn FROM items WHERE table_name = ? AND partition_key = ? AND sort_key = ?`
-      ).get(req.tableName, partitionKey, sortKey) as any;
+      const result = this.db
+        .query(
+          `SELECT lsn FROM items WHERE table_name = ? AND partition_key = ? AND sort_key = ?`
+        )
+        .get(req.tableName, partitionKey, sortKey) as any;
 
       if (result && result.lsn === 0) {
         // Placeholder item - delete it
@@ -251,7 +268,12 @@ export class Shard {
 
   // Regular operations (non-transactional)
 
-  async putItem(tableName: string, partitionKey: string, sortKey: string, item: DynamoDBItem) {
+  async putItem(
+    tableName: string,
+    partitionKey: string,
+    sortKey: string,
+    item: DynamoDBItem
+  ) {
     const itemData = JSON.stringify(item);
     // For non-transactional operations, use timestamp=0
     // This allows transactional writes (which use monotonically increasing timestamps > 0)
@@ -260,9 +282,11 @@ export class Shard {
     const timestamp = 0;
 
     // Get current LSN for this item (if it exists)
-    const currentLsnResult = this.db.query(
-      `SELECT lsn FROM items WHERE table_name = ? AND partition_key = ? AND sort_key = ?`
-    ).get(tableName, partitionKey, sortKey) as any;
+    const currentLsnResult = this.db
+      .query(
+        `SELECT lsn FROM items WHERE table_name = ? AND partition_key = ? AND sort_key = ?`
+      )
+      .get(tableName, partitionKey, sortKey) as any;
     const newLsn = currentLsnResult ? currentLsnResult.lsn + 1 : 1;
 
     this.db.run(
@@ -273,10 +297,16 @@ export class Shard {
     );
   }
 
-  async getItem(tableName: string, partitionKey: string, sortKey: string): Promise<DynamoDBItem | null> {
-    const result = this.db.query(
-      `SELECT item_data FROM items WHERE table_name = ? AND partition_key = ? AND sort_key = ?`
-    ).get(tableName, partitionKey, sortKey) as any;
+  async getItem(
+    tableName: string,
+    partitionKey: string,
+    sortKey: string
+  ): Promise<DynamoDBItem | null> {
+    const result = this.db
+      .query(
+        `SELECT item_data FROM items WHERE table_name = ? AND partition_key = ? AND sort_key = ?`
+      )
+      .get(tableName, partitionKey, sortKey) as any;
 
     return result ? JSON.parse(result.item_data) : null;
   }
@@ -380,7 +410,7 @@ export class Shard {
             params.push(likePattern);
           } else {
             // Fallback for other types
-            const likePattern = valueStr.slice(0, -1) + '%';
+            const likePattern = valueStr.slice(0, -1) + "%";
             sql += ` AND sort_key LIKE ?`;
             params.push(likePattern);
           }
@@ -420,7 +450,9 @@ export class Shard {
     }
 
     // Determine last evaluated key for pagination
-    let lastEvaluatedKey: { partitionKeyValue: string; sortKeyValue: string } | undefined;
+    let lastEvaluatedKey:
+      | { partitionKeyValue: string; sortKeyValue: string }
+      | undefined;
     if (hasMore && items.length > 0) {
       const lastItem = results[limit! - 1];
       lastEvaluatedKey = {
@@ -438,13 +470,6 @@ export class Shard {
   }
 
   // Helper methods
-
-  private getKeyString(key: any): string {
-    // Create deterministic string representation of key
-    const keyAttrs = Object.keys(key).sort();
-    return keyAttrs.map((attr) => JSON.stringify(key[attr])).join("#");
-  }
-
   private applyUpdateExpression(
     item: DynamoDBItem,
     updateExpression: string,

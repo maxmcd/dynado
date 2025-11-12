@@ -32,9 +32,7 @@ export class MetadataStore {
   }
 
   private loadSchemas() {
-    const schemas = this.db
-      .query("SELECT * FROM table_schemas")
-      .all() as any[];
+    const schemas = this.db.query("SELECT * FROM table_schemas").all() as any[];
 
     for (const schema of schemas) {
       this.cache.set(schema.table_name, {
@@ -134,7 +132,7 @@ export class MetadataStore {
   getSortKeyValue(tableName: string, item: any): string {
     const sortKeyName = this.getSortKeyName(tableName);
     if (!sortKeyName) {
-      return ''; // Table doesn't have a sort key
+      return ""; // Table doesn't have a sort key
     }
 
     if (!(sortKeyName in item)) {
@@ -145,14 +143,20 @@ export class MetadataStore {
   }
 
   // Helper to extract both partition and sort key values as strings for storage
-  extractKeyValues(tableName: string, item: any): { partitionKeyValue: string; sortKeyValue: string } {
+  extractKeyValues(
+    tableName: string,
+    item: any
+  ): { partitionKeyValue: string; sortKeyValue: string } {
     const partitionKeyValue = this.getPartitionKeyValue(tableName, item);
     const sortKeyValue = this.getSortKeyValue(tableName, item);
     return { partitionKeyValue, sortKeyValue };
   }
 
   // Helper to extract key values from a key object (not full item)
-  extractKeyValuesFromKey(tableName: string, key: any): { partitionKeyValue: string; sortKeyValue: string } {
+  extractKeyValuesFromKey(
+    tableName: string,
+    key: any
+  ): { partitionKeyValue: string; sortKeyValue: string } {
     const partitionKeyName = this.getPartitionKeyName(tableName);
     const sortKeyName = this.getSortKeyName(tableName);
 
@@ -165,9 +169,8 @@ export class MetadataStore {
     }
 
     const partitionKeyValue = JSON.stringify(key[partitionKeyName]);
-    const sortKeyValue = sortKeyName && (sortKeyName in key)
-      ? JSON.stringify(key[sortKeyName])
-      : '';
+    const sortKeyValue =
+      sortKeyName && sortKeyName in key ? JSON.stringify(key[sortKeyName]) : "";
 
     return { partitionKeyValue, sortKeyValue };
   }

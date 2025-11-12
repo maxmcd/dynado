@@ -38,6 +38,8 @@ export function transactItemToPrepareRequest(
       tableName: item.Put.tableName,
       operation: "Put",
       key: extractKeyFromItem(item.Put.item), // Will be determined by table schema
+      partitionKeyValue: "", // Will be extracted from key by coordinator
+      sortKeyValue: "", // Will be extracted from key by coordinator (empty if no sort key)
       item: item.Put.item,
       conditionExpression: item.Put.conditionExpression,
       expressionAttributeNames: item.Put.expressionAttributeNames,
@@ -52,6 +54,8 @@ export function transactItemToPrepareRequest(
       tableName: item.Update.tableName,
       operation: "Update",
       key: item.Update.key,
+      partitionKeyValue: "", // Will be extracted from key by coordinator
+      sortKeyValue: "", // Will be extracted from key by coordinator (empty if no sort key)
       updateExpression: item.Update.updateExpression,
       conditionExpression: item.Update.conditionExpression,
       expressionAttributeNames: item.Update.expressionAttributeNames,
@@ -66,6 +70,8 @@ export function transactItemToPrepareRequest(
       tableName: item.Delete.tableName,
       operation: "Delete",
       key: item.Delete.key,
+      partitionKeyValue: "", // Will be extracted from key by coordinator
+      sortKeyValue: "", // Will be extracted from key by coordinator (empty if no sort key)
       conditionExpression: item.Delete.conditionExpression,
       expressionAttributeNames: item.Delete.expressionAttributeNames,
       expressionAttributeValues: item.Delete.expressionAttributeValues,
@@ -79,6 +85,8 @@ export function transactItemToPrepareRequest(
       tableName: item.ConditionCheck.tableName,
       operation: "ConditionCheck",
       key: item.ConditionCheck.key,
+      partitionKeyValue: "", // Will be extracted from key by coordinator
+      sortKeyValue: "", // Will be extracted from key by coordinator (empty if no sort key)
       conditionExpression: item.ConditionCheck.conditionExpression,
       expressionAttributeNames: item.ConditionCheck.expressionAttributeNames,
       expressionAttributeValues: item.ConditionCheck.expressionAttributeValues,

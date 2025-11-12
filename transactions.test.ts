@@ -100,9 +100,9 @@ describe("Transaction Operations", () => {
       new GetItemCommand({ TableName: tableName, Key: { id: { S: "item3" } } })
     );
 
-    expect(item1.Item?.value.S).toBe("First");
-    expect(item2.Item?.value.S).toBe("Second");
-    expect(item3.Item?.value.S).toBe("Third");
+    expect(item1.Item?.value!.S).toBe("First");
+    expect(item2.Item?.value!.S).toBe("Second");
+    expect(item3.Item?.value!.S).toBe("Third");
   });
 
   test("should update multiple items atomically", async () => {
@@ -154,8 +154,8 @@ describe("Transaction Operations", () => {
       new GetItemCommand({ TableName: tableName, Key: { id: { S: "item2" } } })
     );
 
-    expect(item1.Item?.count.N).toBe("10");
-    expect(item2.Item?.count.N).toBe("20");
+    expect(item1.Item?.count!.N).toBe("10");
+    expect(item2.Item?.count!.N).toBe("20");
   });
 
   test("should delete multiple items atomically", async () => {
@@ -254,9 +254,9 @@ describe("Transaction Operations", () => {
       new GetItemCommand({ TableName: tableName, Key: { id: { S: "item3" } } })
     );
 
-    expect(item1.Item?.value.S).toBe("New");
-    expect(item2.Item?.value.S).toBe("Updated");
-    expect(item3.Item?.value.S).toBe("Another");
+    expect(item1.Item?.value!.S).toBe("New");
+    expect(item2.Item?.value!.S).toBe("Updated");
+    expect(item3.Item?.value!.S).toBe("Another");
   });
 
   test("should rollback on condition failure", async () => {
@@ -409,7 +409,7 @@ describe("Transaction Operations", () => {
     const item = await client.send(
       new GetItemCommand({ TableName: tableName, Key: { id: { S: "item1" } } })
     );
-    expect(item.Item?.value.S).toBe("Updated");
+    expect(item.Item?.value!.S).toBe("Updated");
   });
 
   test("should handle ConditionCheck operation", async () => {
@@ -449,7 +449,7 @@ describe("Transaction Operations", () => {
     const item2 = await client.send(
       new GetItemCommand({ TableName: tableName, Key: { id: { S: "item2" } } })
     );
-    expect(item2.Item?.value.S).toBe("New");
+    expect(item2.Item?.value!.S).toBe("New");
 
     // Now try with failing condition
     try {
@@ -534,9 +534,9 @@ describe("Transaction Operations", () => {
     );
 
     expect(result.Responses!.length).toBe(3);
-    expect(result.Responses![0]!.Item!.value.S).toBe("First");
-    expect(result.Responses![1]!.Item!.value.S).toBe("Second");
-    expect(result.Responses![2]!.Item!.value.S).toBe("Third");
+    expect(result.Responses![0]!.Item!.value!.S).toBe("First");
+    expect(result.Responses![1]!.Item!.value!.S).toBe("Second");
+    expect(result.Responses![2]!.Item!.value!.S).toBe("Third");
   });
 
   test("should handle missing items in TransactGetItems", async () => {
@@ -570,7 +570,7 @@ describe("Transaction Operations", () => {
     );
 
     expect(result.Responses!.length).toBe(2);
-    expect(result.Responses![0]!.Item!.value.S).toBe("First");
+    expect(result.Responses![0]!.Item!.value!.S).toBe("First");
     expect(result.Responses![1]!.Item).toBeUndefined();
   });
 
@@ -606,8 +606,8 @@ describe("Transaction Operations", () => {
     );
 
     expect(result.Responses!.length).toBe(1);
-    expect(result.Responses![0]!.Item!.id.S).toBe("item1");
-    expect(result.Responses![0]!.Item!.name.S).toBe("Test");
+    expect(result.Responses![0]!.Item!.id!.S).toBe("item1");
+    expect(result.Responses![0]!.Item!.name!.S).toBe("Test");
     expect(result.Responses![0]!.Item!.value).toBeUndefined();
     expect(result.Responses![0]!.Item!.extra).toBeUndefined();
   });
@@ -636,7 +636,7 @@ describe("Transaction Operations", () => {
     let item = await client.send(
       new GetItemCommand({ TableName: tableName, Key: { id: { S: "item1" } } })
     );
-    expect(item.Item?.value.S).toBe("First");
+    expect(item.Item?.value!.S).toBe("First");
 
     // Update the item directly
     await client.send(
@@ -665,7 +665,7 @@ describe("Transaction Operations", () => {
     item = await client.send(
       new GetItemCommand({ TableName: tableName, Key: { id: { S: "item1" } } })
     );
-    expect(item.Item?.value.S).toBe("Changed");
+    expect(item.Item?.value!.S).toBe("Changed");
   });
 
   test("should handle transactions across multiple items", async () => {
@@ -701,8 +701,8 @@ describe("Transaction Operations", () => {
       })
     );
 
-    expect(item0.Item?.value.N).toBe("0");
-    expect(item19.Item?.value.N).toBe("19");
+    expect(item0.Item?.value!.N).toBe("0");
+    expect(item19.Item?.value!.N).toBe("19");
   });
 
   test("should reject transaction with more than 100 items", async () => {

@@ -1,6 +1,6 @@
 // Condition Expression Parser using Chevrotain
 
-import { CstParser, CstNode, IToken } from "chevrotain";
+import { CstParser, type CstNode, type IToken } from "chevrotain";
 import {
   allTokens,
   And,

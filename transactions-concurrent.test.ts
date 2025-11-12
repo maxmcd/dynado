@@ -281,7 +281,7 @@ describe("Concurrent Transaction Tests", () => {
             },
           ]);
 
-          localIncrements[counterId]++;
+          localIncrements[counterId]!++;
         } catch (error) {
           if (error instanceof TransactionCancelledError) {
             // Retry on conflict (in real system, would implement exponential backoff)
@@ -324,7 +324,7 @@ describe("Concurrent Transaction Tests", () => {
         totalActual += actualCount;
         totalExpected += expectedIncrements[counterId]!;
 
-        expect(actualCount).toBe(expectedIncrements[counterId]);
+        expect(actualCount).toBe(expectedIncrements[counterId]!);
       }
     }
 
@@ -392,7 +392,7 @@ describe("Concurrent Transaction Tests", () => {
             successfulClaims[itemId] = [];
           }
           successfulClaims[itemId]!.push(workerId);
-          claimAttempts[workerId]++;
+          claimAttempts[workerId]!++;
         } catch (error) {
           if (error instanceof TransactionCancelledError) {
             // Expected - someone else claimed it first
