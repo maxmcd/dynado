@@ -1,14 +1,18 @@
 // Public API for expression parser
 
-import { expressionLexer } from "./lexer.ts";
-import { conditionParser } from "./condition-parser.ts";
-import { conditionVisitor } from "./condition-visitor.ts";
-import { evaluateCondition } from "./evaluator.ts";
-import { updateParser } from "./update-parser.ts";
-import { updateVisitor } from "./update-visitor.ts";
-import { applyUpdateExpression } from "./update-evaluator.ts";
-import type { ConditionExpression, UpdateExpression, EvaluationContext } from "./ast.ts";
-import type { DynamoDBItem } from "../types.ts";
+import { expressionLexer } from './lexer.ts'
+import { conditionParser } from './condition-parser.ts'
+import { conditionVisitor } from './condition-visitor.ts'
+import { evaluateCondition } from './evaluator.ts'
+import { updateParser } from './update-parser.ts'
+import { updateVisitor } from './update-visitor.ts'
+import { applyUpdateExpression } from './update-evaluator.ts'
+import type {
+  ConditionExpression,
+  UpdateExpression,
+  EvaluationContext,
+} from './ast.ts'
+import type { DynamoDBItem } from '../types.ts'
 
 /**
  * Parse and evaluate a DynamoDB ConditionExpression
@@ -20,46 +24,48 @@ export function evaluateConditionExpression(
   expressionAttributeValues?: Record<string, any>
 ): boolean {
   // Empty or undefined expression always passes
-  if (!conditionExpression || conditionExpression.trim() === "") {
-    return true;
+  if (!conditionExpression || conditionExpression.trim() === '') {
+    return true
   }
 
   try {
     // Lexing
-    const lexResult = expressionLexer.tokenize(conditionExpression);
+    const lexResult = expressionLexer.tokenize(conditionExpression)
 
     if (lexResult.errors.length > 0) {
-      const error = lexResult.errors[0];
+      const error = lexResult.errors[0]
       throw new Error(
         `Lexer error at line ${error?.line}, column ${error?.column}: ${error?.message}`
-      );
+      )
     }
 
     // Parsing
-    conditionParser.input = lexResult.tokens;
-    const cst = conditionParser.conditionExpression();
+    conditionParser.input = lexResult.tokens
+    const cst = conditionParser.conditionExpression()
 
     if (conditionParser.errors.length > 0) {
-      const error = conditionParser.errors[0];
+      const error = conditionParser.errors[0]
       throw new Error(
         `Parser error at token "${error?.token?.image}": ${error?.message}`
-      );
+      )
     }
 
     // Convert CST to AST
-    const ast = conditionVisitor.visit(cst) as ConditionExpression;
+    const ast = conditionVisitor.visit(cst) as ConditionExpression
 
     // Evaluate AST
     const context: EvaluationContext = {
       item,
       expressionAttributeNames,
       expressionAttributeValues,
-    };
+    }
 
-    return evaluateCondition(ast, context);
+    return evaluateCondition(ast, context)
   } catch (error: any) {
     // Provide helpful error message
-    throw new Error(`Failed to evaluate condition expression "${conditionExpression}": ${error.message}`);
+    throw new Error(
+      `Failed to evaluate condition expression "${conditionExpression}": ${error.message}`
+    )
   }
 }
 
@@ -72,48 +78,54 @@ export function applyUpdateExpressionToItem(
   expressionAttributeNames?: Record<string, string>,
   expressionAttributeValues?: Record<string, any>
 ): DynamoDBItem {
-  if (!updateExpression || updateExpression.trim() === "") {
-    return item;
+  if (!updateExpression || updateExpression.trim() === '') {
+    return item
   }
 
   try {
     // Lexing
-    const lexResult = expressionLexer.tokenize(updateExpression);
+    const lexResult = expressionLexer.tokenize(updateExpression)
 
     if (lexResult.errors.length > 0) {
-      const error = lexResult.errors[0];
+      const error = lexResult.errors[0]
       throw new Error(
         `Lexer error at line ${error?.line}, column ${error?.column}: ${error?.message}`
-      );
+      )
     }
 
     // Parsing
-    updateParser.input = lexResult.tokens;
-    const cst = updateParser.updateExpression();
+    updateParser.input = lexResult.tokens
+    const cst = updateParser.updateExpression()
 
     if (updateParser.errors.length > 0) {
-      const error = updateParser.errors[0];
+      const error = updateParser.errors[0]
       throw new Error(
         `Parser error at token "${error?.token?.image}": ${error?.message}`
-      );
+      )
     }
 
     // Convert CST to AST
-    const ast = updateVisitor.visit(cst) as UpdateExpression;
+    const ast = updateVisitor.visit(cst) as UpdateExpression
 
     // Apply update
     const context: EvaluationContext = {
       item,
       expressionAttributeNames,
       expressionAttributeValues,
-    };
+    }
 
-    return applyUpdateExpression(item, ast, context);
+    return applyUpdateExpression(item, ast, context)
   } catch (error: any) {
     // Provide helpful error message
-    throw new Error(`Failed to apply update expression "${updateExpression}": ${error.message}`);
+    throw new Error(
+      `Failed to apply update expression "${updateExpression}": ${error.message}`
+    )
   }
 }
 
 // Re-export types for convenience
-export type { ConditionExpression, UpdateExpression, EvaluationContext } from "./ast.ts";
+export type {
+  ConditionExpression,
+  UpdateExpression,
+  EvaluationContext,
+} from './ast.ts'

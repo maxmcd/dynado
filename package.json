@@ -6,10 +6,17 @@
   "devDependencies": {
     "@aws-sdk/client-dynamodb": "^3.928.0",
     "@types/bun": "latest",
+    "prettier": "^3.6.2",
     "testcontainers": "^11.8.1"
   },
   "peerDependencies": {
     "typescript": "^5"
+  },
+  "prettier": {
+    "trailingComma": "es5",
+    "tabWidth": 2,
+    "semi": false,
+    "singleQuote": true
   },
   "dependencies": {
     "chevrotain": "^11.0.3",

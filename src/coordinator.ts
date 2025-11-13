@@ -1,7 +1,7 @@
 // TransactionCoordinator: Implements DynamoDB's Two-Phase Commit protocol
 // In DO architecture, this would be a pool of Durable Objects
 
-import { Database } from "bun:sqlite";
+import { Database } from 'bun:sqlite'
 import type {
   TransactWriteItem,
   TransactGetItem,
@@ -11,35 +11,35 @@ import type {
   PrepareRequest,
   CommitRequest,
   ReleaseRequest,
-} from "./types.ts";
-import { TransactionCancelledError } from "./types.ts";
+} from './types.ts'
+import { TransactionCancelledError } from './types.ts'
 import {
   generateTransactionId,
   generateTransactionTimestamp,
   buildCancellationReasons,
-} from "./transaction-protocol.ts";
-import type { Shard } from "./shard.ts";
-import type { MetadataStore } from "./metadata-store.ts";
-import { getShardIndex } from "./hash-utils.ts";
-import * as fs from "fs";
+} from './transaction-protocol.ts'
+import type { Shard } from './shard.ts'
+import type { MetadataStore } from './metadata-store.ts'
+import { getShardIndex } from './hash-utils.ts'
+import * as fs from 'fs'
 
 interface IdempotencyCacheEntry {
-  timestamp: number;
-  result: any;
+  timestamp: number
+  result: any
 }
 
 export class TransactionCoordinator {
-  private db: Database;
-  private idempotencyCache = new Map<string, IdempotencyCacheEntry>();
-  private readonly CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+  private db: Database
+  private idempotencyCache = new Map<string, IdempotencyCacheEntry>()
+  private readonly CACHE_TTL_MS = 10 * 60 * 1000 // 10 minutes
 
   constructor(dataDir: string) {
     // Create data directory if it doesn't exist
     if (!fs.existsSync(dataDir)) {
-      fs.mkdirSync(dataDir, { recursive: true });
+      fs.mkdirSync(dataDir, { recursive: true })
     }
 
-    this.db = new Database(`${dataDir}/coordinator.db`);
+    this.db = new Database(`${dataDir}/coordinator.db`)
 
     // Create transaction ledger table
     this.db.run(`
@@ -53,16 +53,16 @@ export class TransactionCoordinator {
         completed_at INTEGER,
         cancellation_reasons TEXT
       )
-    `);
+    `)
 
     // Index for cleanup queries
     this.db.run(`
       CREATE INDEX IF NOT EXISTS idx_ledger_completed
       ON transaction_ledger(completed_at)
-    `);
+    `)
 
     // Periodically clean up old transactions and cache
-    setInterval(() => this.cleanup(), 60 * 1000); // Every minute
+    setInterval(() => this.cleanup(), 60 * 1000) // Every minute
   }
 
   // Execute TransactWriteItems using 2PC protocol
@@ -74,33 +74,33 @@ export class TransactionCoordinator {
   ): Promise<void> {
     // Validate
     if (!items || items.length === 0) {
-      throw new Error("TransactItems cannot be empty");
+      throw new Error('TransactItems cannot be empty')
     }
     if (items.length > 100) {
-      throw new Error("Transaction cannot contain more than 100 items");
+      throw new Error('Transaction cannot contain more than 100 items')
     }
 
     // Check idempotency cache
     if (clientRequestToken) {
-      this.cleanIdempotencyCache();
-      const cached = this.idempotencyCache.get(clientRequestToken);
+      this.cleanIdempotencyCache()
+      const cached = this.idempotencyCache.get(clientRequestToken)
       if (cached) {
-        return cached.result;
+        return cached.result
       }
     }
 
-    const transactionId = generateTransactionId();
-    const timestamp = generateTransactionTimestamp();
+    const transactionId = generateTransactionId()
+    const timestamp = generateTransactionTimestamp()
 
     // Record transaction as PREPARING
     this.recordTransaction({
       transactionId,
-      state: "PREPARING",
+      state: 'PREPARING',
       timestamp,
       clientRequestToken,
       items,
       createdAt: Date.now(),
-    });
+    })
 
     try {
       // Group items by shard and prepare requests
@@ -110,66 +110,66 @@ export class TransactionCoordinator {
         metadataStore,
         transactionId,
         timestamp
-      );
+      )
 
       // PHASE 1: PREPARE
       // Send prepare requests to all involved shards in parallel
       const preparePromises = shardOperations.map(async (op) => {
-        const shard = shards[op.shardIndex];
+        const shard = shards[op.shardIndex]
         if (!shard) {
-          throw new Error(`Shard ${op.shardIndex} not found`);
+          throw new Error(`Shard ${op.shardIndex} not found`)
         }
-        return await shard.prepare(op.prepareRequest);
-      });
+        return await shard.prepare(op.prepareRequest)
+      })
 
-      const prepareResponses = await Promise.all(preparePromises);
+      const prepareResponses = await Promise.all(preparePromises)
 
       // Check if all shards accepted
-      const allAccepted = prepareResponses.every((r) => r.accepted);
+      const allAccepted = prepareResponses.every((r) => r.accepted)
 
       if (!allAccepted) {
         // Find first failure
-        const failureIndex = prepareResponses.findIndex((r) => !r.accepted);
-        const failedResponse = prepareResponses[failureIndex];
+        const failureIndex = prepareResponses.findIndex((r) => !r.accepted)
+        const failedResponse = prepareResponses[failureIndex]
 
         if (!failedResponse) {
-          throw new Error("Failed to find failure response");
+          throw new Error('Failed to find failure response')
         }
 
         // Build cancellation reason
         const reason: CancellationReason = {
-          Code: failedResponse.reason || "Unknown",
-          Message: failedResponse.message || "The conditional request failed",
-        };
+          Code: failedResponse.reason || 'Unknown',
+          Message: failedResponse.message || 'The conditional request failed',
+        }
 
         if (failedResponse.item) {
-          reason.Item = failedResponse.item;
+          reason.Item = failedResponse.item
         }
 
         const cancellationReasons = buildCancellationReasons(
           items.length,
           failureIndex,
           reason
-        );
+        )
 
         // Update ledger
         this.updateTransactionState(
           transactionId,
-          "CANCELLED",
+          'CANCELLED',
           cancellationReasons
-        );
+        )
 
         // RELEASE: Clean up locks on all shards
-        await this.releaseAllShards(shardOperations, shards, transactionId);
+        await this.releaseAllShards(shardOperations, shards, transactionId)
 
         throw new TransactionCancelledError(
-          "Transaction cancelled, please refer cancellation reasons for specific reasons",
+          'Transaction cancelled, please refer cancellation reasons for specific reasons',
           cancellationReasons
-        );
+        )
       }
 
       // All shards accepted - proceed to Phase 2
-      this.updateTransactionState(transactionId, "COMMITTING");
+      this.updateTransactionState(transactionId, 'COMMITTING')
 
       // PHASE 2: COMMIT
       // This phase MUST complete - retry indefinitely on failure
@@ -178,22 +178,22 @@ export class TransactionCoordinator {
         shards,
         transactionId,
         timestamp
-      );
+      )
 
       // Mark as committed
-      this.updateTransactionState(transactionId, "COMMITTED");
+      this.updateTransactionState(transactionId, 'COMMITTED')
 
       // Cache result for idempotency
       if (clientRequestToken) {
         this.idempotencyCache.set(clientRequestToken, {
           timestamp: Date.now(),
           result: undefined,
-        });
+        })
       }
     } catch (error: any) {
       // If error is TransactionCancelledError, it's already handled
       if (error instanceof TransactionCancelledError) {
-        throw error;
+        throw error
       }
 
       // For other errors during Phase 1, try to release locks
@@ -204,13 +204,13 @@ export class TransactionCoordinator {
           metadataStore,
           transactionId,
           timestamp
-        );
-        await this.releaseAllShards(shardOperations, shards, transactionId);
+        )
+        await this.releaseAllShards(shardOperations, shards, transactionId)
       } catch (releaseError) {
         // Ignore release errors
       }
 
-      throw error;
+      throw error
     }
   }
 
@@ -221,54 +221,54 @@ export class TransactionCoordinator {
     metadataStore: MetadataStore
   ): Promise<Array<DynamoDBItem | null>> {
     if (!items || items.length === 0) {
-      throw new Error("TransactItems cannot be empty");
+      throw new Error('TransactItems cannot be empty')
     }
     if (items.length > 100) {
-      throw new Error("Transaction cannot contain more than 100 items");
+      throw new Error('Transaction cannot contain more than 100 items')
     }
 
     // For read transactions, we just read from each shard
     // In a real implementation, we'd use snapshot isolation
-    const results: Array<DynamoDBItem | null> = [];
+    const results: Array<DynamoDBItem | null> = []
 
     for (const item of items) {
       const keyValues = metadataStore.extractKeyValuesFromKey(
         item.tableName,
         item.key
-      );
+      )
       const shardIndex = getShardIndex(
         keyValues.partitionKeyValue,
         shards.length
-      );
-      const shard = shards[shardIndex];
+      )
+      const shard = shards[shardIndex]
 
       if (!shard) {
-        throw new Error(`Shard ${shardIndex} not found`);
+        throw new Error(`Shard ${shardIndex} not found`)
       }
 
       const dbItem = await shard.getItem(
         item.tableName,
         keyValues.partitionKeyValue,
         keyValues.sortKeyValue
-      );
+      )
 
       if (dbItem) {
         // Apply projection expression if provided
-        let resultItem = dbItem;
+        let resultItem = dbItem
         if (item.projectionExpression) {
           resultItem = this.applyProjection(
             dbItem,
             item.projectionExpression,
             item.expressionAttributeNames
-          );
+          )
         }
-        results.push(resultItem);
+        results.push(resultItem)
       } else {
-        results.push(null);
+        results.push(null)
       }
     }
 
-    return results;
+    return results
   }
 
   // Helper: Group items by which shard they belong to
@@ -280,79 +280,79 @@ export class TransactionCoordinator {
     timestamp: number
   ): Promise<
     Array<{
-      shardIndex: number;
-      prepareRequest: PrepareRequest;
-      commitRequest: CommitRequest;
-      releaseKey: DynamoDBItem;
+      shardIndex: number
+      prepareRequest: PrepareRequest
+      commitRequest: CommitRequest
+      releaseKey: DynamoDBItem
     }>
   > {
     const operations: Array<{
-      shardIndex: number;
-      prepareRequest: PrepareRequest;
-      commitRequest: CommitRequest;
-      releaseKey: DynamoDBItem;
-    }> = [];
+      shardIndex: number
+      prepareRequest: PrepareRequest
+      commitRequest: CommitRequest
+      releaseKey: DynamoDBItem
+    }> = []
 
     for (const item of items) {
-      let tableName: string;
-      let key: DynamoDBItem;
-      let operation: "Put" | "Update" | "Delete" | "ConditionCheck";
-      let itemData: DynamoDBItem | undefined;
-      let updateExpression: string | undefined;
-      let conditionExpression: string | undefined;
-      let expressionAttributeNames: Record<string, string> | undefined;
-      let expressionAttributeValues: Record<string, any> | undefined;
-      let returnValuesOnConditionCheckFailure: "ALL_OLD" | "NONE" | undefined;
+      let tableName: string
+      let key: DynamoDBItem
+      let operation: 'Put' | 'Update' | 'Delete' | 'ConditionCheck'
+      let itemData: DynamoDBItem | undefined
+      let updateExpression: string | undefined
+      let conditionExpression: string | undefined
+      let expressionAttributeNames: Record<string, string> | undefined
+      let expressionAttributeValues: Record<string, any> | undefined
+      let returnValuesOnConditionCheckFailure: 'ALL_OLD' | 'NONE' | undefined
 
       if (item.Put) {
-        operation = "Put";
-        tableName = item.Put.tableName;
-        key = metadataStore.extractKey(tableName, item.Put.item);
-        itemData = item.Put.item;
-        conditionExpression = item.Put.conditionExpression;
-        expressionAttributeNames = item.Put.expressionAttributeNames;
-        expressionAttributeValues = item.Put.expressionAttributeValues;
+        operation = 'Put'
+        tableName = item.Put.tableName
+        key = metadataStore.extractKey(tableName, item.Put.item)
+        itemData = item.Put.item
+        conditionExpression = item.Put.conditionExpression
+        expressionAttributeNames = item.Put.expressionAttributeNames
+        expressionAttributeValues = item.Put.expressionAttributeValues
         returnValuesOnConditionCheckFailure =
-          item.Put.returnValuesOnConditionCheckFailure;
+          item.Put.returnValuesOnConditionCheckFailure
       } else if (item.Update) {
-        operation = "Update";
-        tableName = item.Update.tableName;
-        key = item.Update.key;
-        updateExpression = item.Update.updateExpression;
-        conditionExpression = item.Update.conditionExpression;
-        expressionAttributeNames = item.Update.expressionAttributeNames;
-        expressionAttributeValues = item.Update.expressionAttributeValues;
+        operation = 'Update'
+        tableName = item.Update.tableName
+        key = item.Update.key
+        updateExpression = item.Update.updateExpression
+        conditionExpression = item.Update.conditionExpression
+        expressionAttributeNames = item.Update.expressionAttributeNames
+        expressionAttributeValues = item.Update.expressionAttributeValues
         returnValuesOnConditionCheckFailure =
-          item.Update.returnValuesOnConditionCheckFailure;
+          item.Update.returnValuesOnConditionCheckFailure
       } else if (item.Delete) {
-        operation = "Delete";
-        tableName = item.Delete.tableName;
-        key = item.Delete.key;
-        conditionExpression = item.Delete.conditionExpression;
-        expressionAttributeNames = item.Delete.expressionAttributeNames;
-        expressionAttributeValues = item.Delete.expressionAttributeValues;
+        operation = 'Delete'
+        tableName = item.Delete.tableName
+        key = item.Delete.key
+        conditionExpression = item.Delete.conditionExpression
+        expressionAttributeNames = item.Delete.expressionAttributeNames
+        expressionAttributeValues = item.Delete.expressionAttributeValues
         returnValuesOnConditionCheckFailure =
-          item.Delete.returnValuesOnConditionCheckFailure;
+          item.Delete.returnValuesOnConditionCheckFailure
       } else if (item.ConditionCheck) {
-        operation = "ConditionCheck";
-        tableName = item.ConditionCheck.tableName;
-        key = item.ConditionCheck.key;
-        conditionExpression = item.ConditionCheck.conditionExpression;
-        expressionAttributeNames = item.ConditionCheck.expressionAttributeNames;
+        operation = 'ConditionCheck'
+        tableName = item.ConditionCheck.tableName
+        key = item.ConditionCheck.key
+        conditionExpression = item.ConditionCheck.conditionExpression
+        expressionAttributeNames = item.ConditionCheck.expressionAttributeNames
         expressionAttributeValues =
-          item.ConditionCheck.expressionAttributeValues;
+          item.ConditionCheck.expressionAttributeValues
         returnValuesOnConditionCheckFailure =
-          item.ConditionCheck.returnValuesOnConditionCheckFailure;
+          item.ConditionCheck.returnValuesOnConditionCheckFailure
       } else {
-        throw new Error("Invalid transaction item");
+        throw new Error('Invalid transaction item')
       }
 
       // Determine which shard this item belongs to
-      const partitionKey = metadataStore.getPartitionKeyValue(tableName, key);
-      const shardIndex = getShardIndex(partitionKey, shards.length);
+      const partitionKey = metadataStore.getPartitionKeyValue(tableName, key)
+      const shardIndex = getShardIndex(partitionKey, shards.length)
 
       // Extract key values for storage
-      const keyValues = metadataStore.extractKeyValuesFromKey(tableName, key);
+      const keyValues = metadataStore.extractKeyValuesFromKey(tableName, key)
 
       const prepareRequest: PrepareRequest = {
         transactionId,
@@ -368,7 +368,7 @@ export class TransactionCoordinator {
         expressionAttributeNames,
         expressionAttributeValues,
         returnValuesOnConditionCheckFailure,
-      };
+      }
 
       const commitRequest: CommitRequest = {
         transactionId,
@@ -382,50 +382,50 @@ export class TransactionCoordinator {
         updateExpression,
         expressionAttributeNames,
         expressionAttributeValues,
-      };
+      }
 
       operations.push({
         shardIndex,
         prepareRequest,
         commitRequest,
         releaseKey: key,
-      });
+      })
     }
 
-    return operations;
+    return operations
   }
 
   // Phase 2: Commit on all shards with retry
   private async commitAllShards(
     operations: Array<{
-      shardIndex: number;
-      commitRequest: CommitRequest;
+      shardIndex: number
+      commitRequest: CommitRequest
     }>,
     shards: Shard[],
     transactionId: string,
     timestamp: number
   ): Promise<void> {
     // Commit operations must succeed - retry with exponential backoff
-    const MAX_RETRIES = 10;
-    const INITIAL_DELAY = 100;
+    const MAX_RETRIES = 10
+    const INITIAL_DELAY = 100
 
     for (const op of operations) {
-      const shard = shards[op.shardIndex];
+      const shard = shards[op.shardIndex]
       if (!shard) {
-        throw new Error(`Shard ${op.shardIndex} not found`);
+        throw new Error(`Shard ${op.shardIndex} not found`)
       }
 
-      let retries = 0;
-      let delay = INITIAL_DELAY;
-      let lastError: Error | undefined;
+      let retries = 0
+      let delay = INITIAL_DELAY
+      let lastError: Error | undefined
 
       while (retries < MAX_RETRIES) {
         try {
-          await shard.commit(op.commitRequest);
-          break; // Success
+          await shard.commit(op.commitRequest)
+          break // Success
         } catch (error: any) {
-          lastError = error;
-          retries++;
+          lastError = error
+          retries++
 
           if (retries >= MAX_RETRIES) {
             // Transaction is now in an inconsistent state
@@ -436,16 +436,16 @@ export class TransactionCoordinator {
             const err = new Error(
               `Failed to commit transaction ${transactionId} on shard ${op.shardIndex} after ${MAX_RETRIES} retries. ` +
                 `Transaction is in COMMITTING state and requires manual recovery. ` +
-                `Original error: ${lastError?.message || "Unknown error"}`
-            );
+                `Original error: ${lastError?.message || 'Unknown error'}`
+            )
             // Record this failed commit for recovery
-            this.recordFailedCommit(transactionId, op.shardIndex, err);
-            throw err;
+            this.recordFailedCommit(transactionId, op.shardIndex, err)
+            throw err
           }
 
           // Exponential backoff
-          await new Promise((resolve) => setTimeout(resolve, delay));
-          delay = Math.min(delay * 2, 5000);
+          await new Promise((resolve) => setTimeout(resolve, delay))
+          delay = Math.min(delay * 2, 5000)
         }
       }
     }
@@ -461,7 +461,7 @@ export class TransactionCoordinator {
     console.error(
       `CRITICAL: Transaction ${transactionId} failed to commit on shard ${shardIndex}. ` +
         `This requires manual intervention or automated recovery. Error: ${error.message}`
-    );
+    )
 
     // Update transaction state to indicate partial commit
     try {
@@ -470,21 +470,21 @@ export class TransactionCoordinator {
          SET state = 'COMMITTING_FAILED', completed_at = ?
          WHERE transaction_id = ?`,
         [Date.now(), transactionId]
-      );
+      )
     } catch (dbError) {
       console.error(
         `Failed to update transaction ledger for ${transactionId}:`,
         dbError
-      );
+      )
     }
   }
 
   // Release locks on all shards
   private async releaseAllShards(
     operations: Array<{
-      shardIndex: number;
-      prepareRequest: PrepareRequest;
-      releaseKey: DynamoDBItem;
+      shardIndex: number
+      prepareRequest: PrepareRequest
+      releaseKey: DynamoDBItem
     }>,
     shards: Shard[],
     transactionId: string
@@ -493,14 +493,14 @@ export class TransactionCoordinator {
     const releaseByShardMap = new Map<
       number,
       {
-        tableName: string;
-        keys: DynamoDBItem[];
+        tableName: string
+        keys: DynamoDBItem[]
         keyValues: Array<{
-          partitionKeyValue: string;
-          sortKeyValue: string;
-        }>;
+          partitionKeyValue: string
+          sortKeyValue: string
+        }>
       }
-    >();
+    >()
 
     for (const op of operations) {
       if (!releaseByShardMap.has(op.shardIndex)) {
@@ -508,38 +508,38 @@ export class TransactionCoordinator {
           tableName: op.prepareRequest.tableName,
           keys: [],
           keyValues: [],
-        });
+        })
       }
-      releaseByShardMap.get(op.shardIndex)!.keys.push(op.releaseKey);
+      releaseByShardMap.get(op.shardIndex)!.keys.push(op.releaseKey)
       releaseByShardMap.get(op.shardIndex)!.keyValues.push({
         partitionKeyValue: op.prepareRequest.partitionKeyValue,
         sortKeyValue: op.prepareRequest.sortKeyValue,
-      });
+      })
     }
 
     // Send release requests in parallel
     const releasePromises = Array.from(releaseByShardMap.entries()).map(
       async ([shardIndex, data]) => {
-        const shard = shards[shardIndex];
-        if (!shard) return;
+        const shard = shards[shardIndex]
+        if (!shard) return
 
         const releaseRequest: ReleaseRequest = {
           transactionId,
           tableName: data.tableName,
           keys: data.keys,
           keyValues: data.keyValues,
-        };
+        }
 
         try {
-          await shard.release(releaseRequest);
+          await shard.release(releaseRequest)
         } catch (error) {
           // Ignore release errors (best effort)
-          console.error(`Failed to release on shard ${shardIndex}:`, error);
+          console.error(`Failed to release on shard ${shardIndex}:`, error)
         }
       }
-    );
+    )
 
-    await Promise.all(releasePromises);
+    await Promise.all(releasePromises)
   }
 
   // Transaction ledger operations
@@ -561,17 +561,17 @@ export class TransactionCoordinator {
           ? JSON.stringify(record.cancellationReasons)
           : null,
       ]
-    );
+    )
   }
 
   private updateTransactionState(
     transactionId: string,
-    state: "PREPARING" | "COMMITTING" | "COMMITTED" | "CANCELLED",
+    state: 'PREPARING' | 'COMMITTING' | 'COMMITTED' | 'CANCELLED',
     cancellationReasons?: CancellationReason[]
   ): void {
-    const completedAt = ["COMMITTED", "CANCELLED"].includes(state)
+    const completedAt = ['COMMITTED', 'CANCELLED'].includes(state)
       ? Date.now()
-      : null;
+      : null
 
     this.db.run(
       `UPDATE transaction_ledger
@@ -583,14 +583,14 @@ export class TransactionCoordinator {
         cancellationReasons ? JSON.stringify(cancellationReasons) : null,
         transactionId,
       ]
-    );
+    )
   }
 
   // Helper methods
 
   private getKeyString(key: any): string {
-    const keyAttrs = Object.keys(key).sort();
-    return keyAttrs.map((attr) => JSON.stringify(key[attr])).join("#");
+    const keyAttrs = Object.keys(key).sort()
+    return keyAttrs.map((attr) => JSON.stringify(key[attr])).join('#')
   }
 
   private applyProjection(
@@ -598,45 +598,45 @@ export class TransactionCoordinator {
     projectionExpression: string,
     expressionAttributeNames?: Record<string, string>
   ): DynamoDBItem {
-    const attrs = projectionExpression.split(",").map((a) => a.trim());
-    const projected: DynamoDBItem = {};
+    const attrs = projectionExpression.split(',').map((a) => a.trim())
+    const projected: DynamoDBItem = {}
 
     for (const attr of attrs) {
-      let attrName = attr;
-      if (expressionAttributeNames && attr.startsWith("#")) {
-        const resolved = expressionAttributeNames[attr];
-        if (resolved) attrName = resolved;
+      let attrName = attr
+      if (expressionAttributeNames && attr.startsWith('#')) {
+        const resolved = expressionAttributeNames[attr]
+        if (resolved) attrName = resolved
       }
       if (attrName && attrName in item) {
-        projected[attrName] = item[attrName];
+        projected[attrName] = item[attrName]
       }
     }
 
-    return projected;
+    return projected
   }
 
   private cleanIdempotencyCache(): void {
-    const cutoff = Date.now() - this.CACHE_TTL_MS;
+    const cutoff = Date.now() - this.CACHE_TTL_MS
     for (const [token, entry] of this.idempotencyCache.entries()) {
       if (entry.timestamp < cutoff) {
-        this.idempotencyCache.delete(token);
+        this.idempotencyCache.delete(token)
       }
     }
   }
 
   private cleanup(): void {
     // Clean up old completed transactions (keep for 10 minutes)
-    const cutoff = Date.now() - this.CACHE_TTL_MS;
+    const cutoff = Date.now() - this.CACHE_TTL_MS
     this.db.run(
-      "DELETE FROM transaction_ledger WHERE completed_at IS NOT NULL AND completed_at < ?",
+      'DELETE FROM transaction_ledger WHERE completed_at IS NOT NULL AND completed_at < ?',
       [cutoff]
-    );
+    )
 
     // Clean idempotency cache
-    this.cleanIdempotencyCache();
+    this.cleanIdempotencyCache()
   }
 
   close() {
-    this.db.close();
+    this.db.close()
   }
 }

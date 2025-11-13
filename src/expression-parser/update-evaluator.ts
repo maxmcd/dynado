@@ -13,45 +13,45 @@ import type {
   AttributePath,
   Value,
   EvaluationContext,
-} from "./ast.ts";
-import type { DynamoDBItem } from "../types.ts";
+} from './ast.ts'
+import type { DynamoDBItem } from '../types.ts'
 
 export function applyUpdateExpression(
   item: DynamoDBItem,
   expression: UpdateExpression,
   context: EvaluationContext
 ): DynamoDBItem {
-  const updatedItem = { ...item };
+  const updatedItem = { ...item }
 
   // Apply SET actions
   if (expression.set) {
     for (const action of expression.set) {
-      applySetAction(updatedItem, action, context);
+      applySetAction(updatedItem, action, context)
     }
   }
 
   // Apply REMOVE actions
   if (expression.remove) {
     for (const action of expression.remove) {
-      applyRemoveAction(updatedItem, action, context);
+      applyRemoveAction(updatedItem, action, context)
     }
   }
 
   // Apply ADD actions
   if (expression.add) {
     for (const action of expression.add) {
-      applyAddAction(updatedItem, action, context);
+      applyAddAction(updatedItem, action, context)
     }
   }
 
   // Apply DELETE actions
   if (expression.delete) {
     for (const action of expression.delete) {
-      applyDeleteAction(updatedItem, action, context);
+      applyDeleteAction(updatedItem, action, context)
     }
   }
 
-  return updatedItem;
+  return updatedItem
 }
 
 function applySetAction(
@@ -59,11 +59,11 @@ function applySetAction(
   action: SetAction,
   context: EvaluationContext
 ): void {
-  const attrName = resolveAttributeName(action.path.name, context);
-  const value = evaluateSetValue(item, action.value, context);
+  const attrName = resolveAttributeName(action.path.name, context)
+  const value = evaluateSetValue(item, action.value, context)
 
   if (value !== undefined) {
-    item[attrName] = value;
+    item[attrName] = value
   }
 }
 
@@ -73,53 +73,54 @@ function evaluateSetValue(
   context: EvaluationContext
 ): any {
   // Arithmetic expression
-  if (value.type === "arithmetic") {
-    const expr = value as ArithmeticExpression;
-    const left = resolveOperand(item, expr.left, context);
-    const right = resolveOperand(item, expr.right, context);
+  if (value.type === 'arithmetic') {
+    const expr = value as ArithmeticExpression
+    const left = resolveOperand(item, expr.left, context)
+    const right = resolveOperand(item, expr.right, context)
 
-    const leftNum = getNumericValue(left);
-    const rightNum = getNumericValue(right);
+    const leftNum = getNumericValue(left)
+    const rightNum = getNumericValue(right)
 
     if (leftNum !== null && rightNum !== null) {
-      const result = expr.operator === "+" ? leftNum + rightNum : leftNum - rightNum;
-      return { N: String(result) };
+      const result =
+        expr.operator === '+' ? leftNum + rightNum : leftNum - rightNum
+      return { N: String(result) }
     }
 
-    return undefined;
+    return undefined
   }
 
   // if_not_exists function
-  if (value.type === "if_not_exists") {
-    const expr = value as IfNotExistsExpression;
-    const attrName = resolveAttributeName(expr.path.name, context);
+  if (value.type === 'if_not_exists') {
+    const expr = value as IfNotExistsExpression
+    const attrName = resolveAttributeName(expr.path.name, context)
 
     if (attrName in item) {
-      return item[attrName];
+      return item[attrName]
     }
 
-    return resolveValue(expr.defaultValue, context);
+    return resolveValue(expr.defaultValue, context)
   }
 
   // list_append function
-  if (value.type === "list_append") {
-    const expr = value as ListAppendExpression;
-    const list1 = resolveOperand(item, expr.list1, context);
-    const list2 = resolveOperand(item, expr.list2, context);
+  if (value.type === 'list_append') {
+    const expr = value as ListAppendExpression
+    const list1 = resolveOperand(item, expr.list1, context)
+    const list2 = resolveOperand(item, expr.list2, context)
 
     // Get arrays from DynamoDB list format or native arrays
-    const arr1 = list1?.L || (Array.isArray(list1) ? list1 : []);
-    const arr2 = list2?.L || (Array.isArray(list2) ? list2 : []);
+    const arr1 = list1?.L || (Array.isArray(list1) ? list1 : [])
+    const arr2 = list2?.L || (Array.isArray(list2) ? list2 : [])
 
-    return { L: [...arr1, ...arr2] };
+    return { L: [...arr1, ...arr2] }
   }
 
   // Simple value
-  if (value.type === "value") {
-    return resolveValue(value as Value, context);
+  if (value.type === 'value') {
+    return resolveValue(value as Value, context)
   }
 
-  return undefined;
+  return undefined
 }
 
 function applyRemoveAction(
@@ -127,8 +128,8 @@ function applyRemoveAction(
   action: RemoveAction,
   context: EvaluationContext
 ): void {
-  const attrName = resolveAttributeName(action.path.name, context);
-  delete item[attrName];
+  const attrName = resolveAttributeName(action.path.name, context)
+  delete item[attrName]
 }
 
 function applyAddAction(
@@ -136,16 +137,16 @@ function applyAddAction(
   action: AddAction,
   context: EvaluationContext
 ): void {
-  const attrName = resolveAttributeName(action.path.name, context);
-  const addValue = resolveValue(action.value, context);
+  const attrName = resolveAttributeName(action.path.name, context)
+  const addValue = resolveValue(action.value, context)
 
-  if (!addValue || !addValue.N) return;
+  if (!addValue || !addValue.N) return
 
-  const currentValue = item[attrName];
-  const currentNum = currentValue?.N ? parseInt(currentValue.N) : 0;
-  const addNum = parseInt(addValue.N);
+  const currentValue = item[attrName]
+  const currentNum = currentValue?.N ? parseInt(currentValue.N) : 0
+  const addNum = parseInt(addValue.N)
 
-  item[attrName] = { N: String(currentNum + addNum) };
+  item[attrName] = { N: String(currentNum + addNum) }
 }
 
 function applyDeleteAction(
@@ -153,13 +154,13 @@ function applyDeleteAction(
   action: DeleteAction,
   context: EvaluationContext
 ): void {
-  const attrName = resolveAttributeName(action.path.name, context);
-  const deleteValue = resolveValue(action.value, context);
+  const attrName = resolveAttributeName(action.path.name, context)
+  const deleteValue = resolveValue(action.value, context)
 
   // DELETE is used for removing elements from sets
   // For now, we'll skip this implementation as it's complex
   // and not used in our current tests
-  console.warn(`DELETE action not fully implemented for ${attrName}`);
+  console.warn(`DELETE action not fully implemented for ${attrName}`)
 }
 
 // Helper functions
@@ -168,18 +169,18 @@ function resolveAttributeName(
   name: string,
   context: EvaluationContext
 ): string {
-  if (name.startsWith("#")) {
-    return context.expressionAttributeNames?.[name] || name;
+  if (name.startsWith('#')) {
+    return context.expressionAttributeNames?.[name] || name
   }
-  return name;
+  return name
 }
 
 function resolveValue(value: Value, context: EvaluationContext): any {
-  if (typeof value.value === "string" && value.value.startsWith(":")) {
+  if (typeof value.value === 'string' && value.value.startsWith(':')) {
     // Expression attribute value
-    return context.expressionAttributeValues?.[value.value];
+    return context.expressionAttributeValues?.[value.value]
   }
-  return value.value;
+  return value.value
 }
 
 function resolveOperand(
@@ -187,34 +188,34 @@ function resolveOperand(
   operand: AttributePath | Value,
   context: EvaluationContext
 ): any {
-  if (operand.type === "attribute_path") {
-    const attrName = resolveAttributeName(operand.name, context);
-    return item[attrName];
+  if (operand.type === 'attribute_path') {
+    const attrName = resolveAttributeName(operand.name, context)
+    return item[attrName]
   }
 
-  if (operand.type === "value") {
-    return resolveValue(operand, context);
+  if (operand.type === 'value') {
+    return resolveValue(operand, context)
   }
 
-  return undefined;
+  return undefined
 }
 
 function getNumericValue(value: any): number | null {
-  if (value === null || value === undefined) return null;
+  if (value === null || value === undefined) return null
 
   if (value.N) {
-    const num = parseFloat(value.N);
-    return isNaN(num) ? null : num;
+    const num = parseFloat(value.N)
+    return isNaN(num) ? null : num
   }
 
-  if (typeof value === "number") {
-    return value;
+  if (typeof value === 'number') {
+    return value
   }
 
-  if (typeof value === "string") {
-    const num = parseFloat(value);
-    return isNaN(num) ? null : num;
+  if (typeof value === 'string') {
+    const num = parseFloat(value)
+    return isNaN(num) ? null : num
   }
 
-  return null;
+  return null
 }
