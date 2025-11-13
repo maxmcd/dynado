@@ -2,8 +2,26 @@
 // In DO architecture, this would be a single Durable Object
 
 import { Database } from 'bun:sqlite'
-import type { TableSchema } from './types.ts'
+import type { KeySchemaElement } from '@aws-sdk/client-dynamodb'
+import type { DynamoDBItem, TableSchema } from './types.ts'
 import * as fs from 'fs'
+
+interface TableSchemaRow {
+  table_name: string
+  key_schema: string
+  attribute_definitions: string
+  created_at: number
+}
+
+function ensureAttributeName(
+  schema: KeySchemaElement,
+  context: string
+): string {
+  if (!schema.AttributeName) {
+    throw new Error(`Key schema missing AttributeName for ${context}`)
+  }
+  return schema.AttributeName
+}
 
 export class MetadataStore {
   private db: Database
@@ -32,7 +50,9 @@ export class MetadataStore {
   }
 
   private loadSchemas() {
-    const schemas = this.db.query('SELECT * FROM table_schemas').all() as any[]
+    const schemas = this.db
+      .query<TableSchemaRow, []>('SELECT * FROM table_schemas')
+      .all()
 
     for (const schema of schemas) {
       this.cache.set(schema.table_name, {
@@ -80,7 +100,7 @@ export class MetadataStore {
     if (!schema) return null
 
     const partitionKeyAttr = schema.keySchema.find(
-      (k: any) => k.KeyType === 'HASH'
+      (k: KeySchemaElement) => k.KeyType === 'HASH'
     )
     return partitionKeyAttr?.AttributeName || null
   }
@@ -90,60 +110,71 @@ export class MetadataStore {
     const schema = this.cache.get(tableName)
     if (!schema) return null
 
-    const sortKeyAttr = schema.keySchema.find((k: any) => k.KeyType === 'RANGE')
+    const sortKeyAttr = schema.keySchema.find(
+      (k: KeySchemaElement) => k.KeyType === 'RANGE'
+    )
     return sortKeyAttr?.AttributeName || null
   }
 
   // Helper to extract key from item based on table schema
-  extractKey(tableName: string, item: any): any {
+  extractKey(tableName: string, item: DynamoDBItem): DynamoDBItem {
     const schema = this.cache.get(tableName)
     if (!schema) {
       throw new Error(`Table not found: ${tableName}`)
     }
 
-    const key: any = {}
+    const key: DynamoDBItem = {}
     for (const keySchema of schema.keySchema) {
-      const attrName = keySchema.AttributeName
+      const attrName = ensureAttributeName(
+        keySchema,
+        `table ${tableName} key extraction`
+      )
       if (!(attrName in item)) {
         throw new Error(`Key attribute missing: ${attrName}`)
       }
-      key[attrName] = item[attrName]
+      const value = item[attrName]
+      if (value === undefined) {
+        throw new Error(`Key attribute missing: ${attrName}`)
+      }
+      key[attrName] = value
     }
     return key
   }
 
   // Helper to get partition key value from item
-  getPartitionKeyValue(tableName: string, item: any): string {
+  getPartitionKeyValue(tableName: string, item: DynamoDBItem): string {
     const partitionKeyName = this.getPartitionKeyName(tableName)
     if (!partitionKeyName) {
       throw new Error(`No partition key found for table: ${tableName}`)
     }
 
-    if (!(partitionKeyName in item)) {
+    const value = item[partitionKeyName]
+    if (value === undefined) {
       throw new Error(`Partition key attribute missing: ${partitionKeyName}`)
     }
 
-    return JSON.stringify(item[partitionKeyName])
+    return JSON.stringify(value)
   }
 
   // Helper to get sort key value from item (returns empty string if table has no sort key)
-  getSortKeyValue(tableName: string, item: any): string {
+  getSortKeyValue(tableName: string, item: DynamoDBItem): string {
     const sortKeyName = this.getSortKeyName(tableName)
     if (!sortKeyName) {
       return '' // Table doesn't have a sort key
     }
 
-    if (!(sortKeyName in item)) {
+    const value = item[sortKeyName]
+    if (value === undefined) {
       throw new Error(`Sort key attribute missing: ${sortKeyName}`)
     }
 
-    return JSON.stringify(item[sortKeyName])
+    return JSON.stringify(value)
   }
 
   // Helper to extract both partition and sort key values as strings for storage
   extractKeyValues(
     tableName: string,
-    item: any
+    item: DynamoDBItem
   ): { partitionKeyValue: string; sortKeyValue: string } {
     const partitionKeyValue = this.getPartitionKeyValue(tableName, item)
     const sortKeyValue = this.getSortKeyValue(tableName, item)
@@ -153,7 +184,7 @@ export class MetadataStore {
   // Helper to extract key values from a key object (not full item)
   extractKeyValuesFromKey(
     tableName: string,
-    key: any
+    key: DynamoDBItem
   ): { partitionKeyValue: string; sortKeyValue: string } {
     const partitionKeyName = this.getPartitionKeyName(tableName)
     const sortKeyName = this.getSortKeyName(tableName)
@@ -162,13 +193,16 @@ export class MetadataStore {
       throw new Error(`No partition key found for table: ${tableName}`)
     }
 
-    if (!(partitionKeyName in key)) {
+    const partitionValue = key[partitionKeyName]
+    if (partitionValue === undefined) {
       throw new Error(`Partition key attribute missing: ${partitionKeyName}`)
     }
 
-    const partitionKeyValue = JSON.stringify(key[partitionKeyName])
+    const partitionKeyValue = JSON.stringify(partitionValue)
     const sortKeyValue =
-      sortKeyName && sortKeyName in key ? JSON.stringify(key[sortKeyName]) : ''
+      sortKeyName && key[sortKeyName] !== undefined
+        ? JSON.stringify(key[sortKeyName])
+        : ''
 
     return { partitionKeyValue, sortKeyValue }
   }

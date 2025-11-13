@@ -13,6 +13,7 @@ import type {
   EvaluationContext,
 } from './ast.ts'
 import type { DynamoDBItem } from '../types.ts'
+import type { AttributeValue } from '@aws-sdk/client-dynamodb'
 
 /**
  * Parse and evaluate a DynamoDB ConditionExpression
@@ -21,7 +22,7 @@ export function evaluateConditionExpression(
   item: DynamoDBItem | null,
   conditionExpression?: string,
   expressionAttributeNames?: Record<string, string>,
-  expressionAttributeValues?: Record<string, any>
+  expressionAttributeValues?: Record<string, AttributeValue>
 ): boolean {
   // Empty or undefined expression always passes
   if (!conditionExpression || conditionExpression.trim() === '') {
@@ -76,7 +77,7 @@ export function applyUpdateExpressionToItem(
   item: DynamoDBItem,
   updateExpression: string,
   expressionAttributeNames?: Record<string, string>,
-  expressionAttributeValues?: Record<string, any>
+  expressionAttributeValues?: Record<string, AttributeValue>
 ): DynamoDBItem {
   if (!updateExpression || updateExpression.trim() === '') {
     return item

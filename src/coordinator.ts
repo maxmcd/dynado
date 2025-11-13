@@ -3,11 +3,14 @@
 
 import { Database } from 'bun:sqlite'
 import type {
+  AttributeValue,
+  CancellationReason,
+} from '@aws-sdk/client-dynamodb'
+import type {
   TransactWriteItem,
   TransactGetItem,
   DynamoDBItem,
   TransactionRecord,
-  CancellationReason,
   PrepareRequest,
   CommitRequest,
   ReleaseRequest,
@@ -25,7 +28,7 @@ import * as fs from 'fs'
 
 interface IdempotencyCacheEntry {
   timestamp: number
-  result: any
+  result: void
 }
 
 export class TransactionCoordinator {
@@ -190,7 +193,7 @@ export class TransactionCoordinator {
           result: undefined,
         })
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       // If error is TransactionCancelledError, it's already handled
       if (error instanceof TransactionCancelledError) {
         throw error
@@ -206,7 +209,7 @@ export class TransactionCoordinator {
           timestamp
         )
         await this.releaseAllShards(shardOperations, shards, transactionId)
-      } catch (releaseError) {
+      } catch {
         // Ignore release errors
       }
 
@@ -301,7 +304,9 @@ export class TransactionCoordinator {
       let updateExpression: string | undefined
       let conditionExpression: string | undefined
       let expressionAttributeNames: Record<string, string> | undefined
-      let expressionAttributeValues: Record<string, any> | undefined
+      let expressionAttributeValues:
+        | Record<string, AttributeValue>
+        | undefined
       let returnValuesOnConditionCheckFailure: 'ALL_OLD' | 'NONE' | undefined
 
       if (item.Put) {
@@ -417,14 +422,15 @@ export class TransactionCoordinator {
 
       let retries = 0
       let delay = INITIAL_DELAY
-      let lastError: Error | undefined
+      let lastErrorMessage = 'Unknown error'
 
       while (retries < MAX_RETRIES) {
         try {
           await shard.commit(op.commitRequest)
           break // Success
-        } catch (error: any) {
-          lastError = error
+        } catch (error: unknown) {
+          lastErrorMessage =
+            error instanceof Error ? error.message : String(error)
           retries++
 
           if (retries >= MAX_RETRIES) {
@@ -436,7 +442,7 @@ export class TransactionCoordinator {
             const err = new Error(
               `Failed to commit transaction ${transactionId} on shard ${op.shardIndex} after ${MAX_RETRIES} retries. ` +
                 `Transaction is in COMMITTING state and requires manual recovery. ` +
-                `Original error: ${lastError?.message || 'Unknown error'}`
+                `Original error: ${lastErrorMessage}`
             )
             // Record this failed commit for recovery
             this.recordFailedCommit(transactionId, op.shardIndex, err)
@@ -588,7 +594,7 @@ export class TransactionCoordinator {
 
   // Helper methods
 
-  private getKeyString(key: any): string {
+  private getKeyString(key: DynamoDBItem): string {
     const keyAttrs = Object.keys(key).sort()
     return keyAttrs.map((attr) => JSON.stringify(key[attr])).join('#')
   }
@@ -599,7 +605,7 @@ export class TransactionCoordinator {
     expressionAttributeNames?: Record<string, string>
   ): DynamoDBItem {
     const attrs = projectionExpression.split(',').map((a) => a.trim())
-    const projected: DynamoDBItem = {}
+    const projected: DynamoDBItem = {} as DynamoDBItem
 
     for (const attr of attrs) {
       let attrName = attr
@@ -607,8 +613,11 @@ export class TransactionCoordinator {
         const resolved = expressionAttributeNames[attr]
         if (resolved) attrName = resolved
       }
-      if (attrName && attrName in item) {
-        projected[attrName] = item[attrName]
+      if (attrName) {
+        const value = item[attrName]
+        if (value !== undefined) {
+          projected[attrName] = value
+        }
       }
     }
 

@@ -2,6 +2,7 @@
 // In DO architecture, each instance would be a separate Durable Object
 
 import { Database } from 'bun:sqlite'
+import type { AttributeValue } from '@aws-sdk/client-dynamodb'
 import type {
   DynamoDBItem,
   PrepareRequest,
@@ -13,6 +14,30 @@ import {
   evaluateConditionExpression,
   applyUpdateExpressionToItem,
 } from './expression-parser/index.ts'
+
+interface ItemMetadataRow {
+  item_data: string
+  ongoing_transaction_id: string | null
+  last_update_timestamp: number
+  lsn: number
+}
+
+interface ItemRow {
+  item_data: string
+}
+
+interface LsnRow {
+  lsn: number
+}
+
+interface CountRow {
+  count: number
+}
+
+interface QueryRow {
+  item_data: string
+  sort_key: string
+}
 
 export class Shard {
   private db: Database
@@ -61,8 +86,8 @@ export class Shard {
                    WHERE table_name = ? AND partition_key = ? AND sort_key = ?`
 
     const result = this.db
-      .query(query)
-      .get(req.tableName, partitionKey, sortKey) as any
+      .query<ItemMetadataRow, [string, string, string]>(query)
+      .get(req.tableName, partitionKey, sortKey)
 
     let currentItem: DynamoDBItem | null = null
     let currentLsn = 0
@@ -188,12 +213,12 @@ export class Shard {
     } else {
       // Update operation - apply update expression
       const result = this.db
-        .query(
+        .query<{ item_data: string; lsn: number }, [string, string, string]>(
           `SELECT item_data, lsn
          FROM items
          WHERE table_name = ? AND partition_key = ? AND sort_key = ?`
         )
-        .get(req.tableName, partitionKey, sortKey) as any
+        .get(req.tableName, partitionKey, sortKey)
 
       let currentItem = result ? JSON.parse(result.item_data) : { ...req.key }
 
@@ -208,10 +233,10 @@ export class Shard {
 
     // Get current LSN to increment
     const result = this.db
-      .query(
+      .query<LsnRow, [string, string, string]>(
         `SELECT lsn FROM items WHERE table_name = ? AND partition_key = ? AND sort_key = ?`
       )
-      .get(req.tableName, partitionKey, sortKey) as any
+      .get(req.tableName, partitionKey, sortKey)
 
     const newLsn = result ? result.lsn + 1 : 1
 
@@ -242,10 +267,10 @@ export class Shard {
 
       // Check if item was a placeholder (created during prepare)
       const result = this.db
-        .query(
+        .query<LsnRow, [string, string, string]>(
           `SELECT lsn FROM items WHERE table_name = ? AND partition_key = ? AND sort_key = ?`
         )
-        .get(req.tableName, partitionKey, sortKey) as any
+        .get(req.tableName, partitionKey, sortKey)
 
       if (result && result.lsn === 0) {
         // Placeholder item - delete it
@@ -283,10 +308,10 @@ export class Shard {
 
     // Get current LSN for this item (if it exists)
     const currentLsnResult = this.db
-      .query(
+      .query<LsnRow, [string, string, string]>(
         `SELECT lsn FROM items WHERE table_name = ? AND partition_key = ? AND sort_key = ?`
       )
-      .get(tableName, partitionKey, sortKey) as any
+      .get(tableName, partitionKey, sortKey)
     const newLsn = currentLsnResult ? currentLsnResult.lsn + 1 : 1
 
     this.db.run(
@@ -303,10 +328,10 @@ export class Shard {
     sortKey: string
   ): Promise<DynamoDBItem | null> {
     const result = this.db
-      .query(
+      .query<ItemRow, [string, string, string]>(
         `SELECT item_data FROM items WHERE table_name = ? AND partition_key = ? AND sort_key = ?`
       )
-      .get(tableName, partitionKey, sortKey) as any
+      .get(tableName, partitionKey, sortKey)
 
     return result ? JSON.parse(result.item_data) : null
   }
@@ -329,18 +354,20 @@ export class Shard {
 
   async scanTable(tableName: string): Promise<DynamoDBItem[]> {
     const results = this.db
-      .query('SELECT item_data FROM items WHERE table_name = ?')
-      .all(tableName) as any[]
+      .query<ItemRow, [string]>('SELECT item_data FROM items WHERE table_name = ?')
+      .all(tableName)
 
-    return results.map((r: any) => JSON.parse(r.item_data))
+    return results.map((r) => JSON.parse(r.item_data))
   }
 
   async getItemCount(tableName: string): Promise<number> {
     const result = this.db
-      .query('SELECT COUNT(*) as count FROM items WHERE table_name = ?')
-      .get(tableName) as any
+      .query<CountRow, [string]>(
+        'SELECT COUNT(*) as count FROM items WHERE table_name = ?'
+      )
+      .get(tableName)
 
-    return result.count
+    return result?.count ?? 0
   }
 
   async deleteAllTableItems(tableName: string): Promise<void> {
@@ -362,7 +389,7 @@ export class Shard {
   }> {
     // Build SQL query based on sort key condition
     let sql = `SELECT item_data, sort_key FROM items WHERE table_name = ? AND partition_key = ?`
-    const params: any[] = [tableName, partitionKeyValue]
+    const params: Array<string | number> = [tableName, partitionKeyValue]
 
     // Add sort key condition if provided
     if (sortKeyCondition) {
@@ -387,11 +414,15 @@ export class Shard {
           sql += ` AND sort_key >= ?`
           params.push(JSON.stringify(sortKeyCondition.value))
           break
-        case 'BETWEEN':
+        case 'BETWEEN': {
+          if (sortKeyCondition.value2 === undefined) {
+            throw new Error('BETWEEN requires two sort key values')
+          }
           sql += ` AND sort_key BETWEEN ? AND ?`
           params.push(JSON.stringify(sortKeyCondition.value))
           params.push(JSON.stringify(sortKeyCondition.value2))
           break
+        }
         case 'begins_with':
           // For begins_with, we use LIKE with the value as prefix
           // Since sort keys are JSON.stringify'd, we need to match the stringified version
@@ -435,7 +466,7 @@ export class Shard {
     }
 
     // Execute query
-    const results = this.db.query(sql).all(...params) as any[]
+    const results = this.db.query(sql).all(...params) as QueryRow[]
 
     // Parse results
     const items: DynamoDBItem[] = []
@@ -446,18 +477,23 @@ export class Shard {
         hasMore = true
         break
       }
-      items.push(JSON.parse(results[i].item_data))
+      const row = results[i]
+      if (row) {
+        items.push(JSON.parse(row.item_data))
+      }
     }
 
     // Determine last evaluated key for pagination
     let lastEvaluatedKey:
       | { partitionKeyValue: string; sortKeyValue: string }
       | undefined
-    if (hasMore && items.length > 0) {
-      const lastItem = results[limit! - 1]
-      lastEvaluatedKey = {
-        partitionKeyValue,
-        sortKeyValue: lastItem.sort_key,
+    if (hasMore && items.length > 0 && limit) {
+      const lastItem = results[limit - 1]
+      if (lastItem) {
+        lastEvaluatedKey = {
+          partitionKeyValue,
+          sortKeyValue: lastItem.sort_key,
+        }
       }
     }
 
@@ -474,7 +510,7 @@ export class Shard {
     item: DynamoDBItem,
     updateExpression: string,
     expressionAttributeNames?: Record<string, string>,
-    expressionAttributeValues?: Record<string, any>
+    expressionAttributeValues?: Record<string, AttributeValue>
   ): DynamoDBItem {
     return applyUpdateExpressionToItem(
       item,

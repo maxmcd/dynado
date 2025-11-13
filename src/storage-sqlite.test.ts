@@ -111,11 +111,11 @@ describe('Sharded SQLite Storage', () => {
     })
 
     let item = await storage.getItem('Items', { id: { S: 'item-1' } })
-    expect(item?.value.N).toBe('20')
+    expect(item?.value?.N).toBe('20')
 
     // Delete item
     const deleted = await storage.deleteItem('Items', { id: { S: 'item-1' } })
-    expect(deleted?.value.N).toBe('20')
+    expect(deleted?.value?.N).toBe('20')
 
     // Verify deletion
     item = await storage.getItem('Items', { id: { S: 'item-1' } })
@@ -147,7 +147,7 @@ describe('Sharded SQLite Storage', () => {
 
     const items = await storage.batchGet('BatchTest', keys)
     expect(items.length).toBe(3)
-    expect(items.some((item) => item.id.S === 'batch-1')).toBe(true)
+    expect(items.some((item) => item.id?.S === 'batch-1')).toBe(true)
   })
 
   test('should query items with condition', async () => {
@@ -182,7 +182,7 @@ describe('Sharded SQLite Storage', () => {
 
     expect(result.items.length).toBe(2)
     expect(
-      result.items.every((item) => item.category.S === 'electronics')
+      result.items.every((item) => item.category?.S === 'electronics')
     ).toBe(true)
   })
 
@@ -212,7 +212,7 @@ describe('Sharded SQLite Storage', () => {
     const item = await newStorage.getItem('PersistTest', {
       id: { S: 'persist-1' },
     })
-    expect(item?.data.S).toBe('Persisted')
+    expect(item?.data?.S).toBe('Persisted')
 
     newStorage.close()
   })

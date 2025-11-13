@@ -1,19 +1,18 @@
 // Shared types for DO-compatible architecture
 
-export interface DynamoDBItem {
-  [key: string]: any
-  // Transaction-related metadata (stored in SQLite alongside item data)
-  _metadata?: {
-    ongoingTransactionId?: string
-    lastUpdateTimestamp?: number
-    lsn?: number // Log Sequence Number for optimistic concurrency
-  }
-}
+import type {
+  AttributeDefinition,
+  AttributeValue,
+  CancellationReason,
+  KeySchemaElement,
+} from '@aws-sdk/client-dynamodb'
+
+export type DynamoDBItem = Record<string, AttributeValue>
 
 export interface TableSchema {
   tableName: string
-  keySchema: any[]
-  attributeDefinitions: any[]
+  keySchema: KeySchemaElement[]
+  attributeDefinitions: AttributeDefinition[]
 }
 
 export interface TransactWriteItem {
@@ -22,7 +21,7 @@ export interface TransactWriteItem {
     item: DynamoDBItem
     conditionExpression?: string
     expressionAttributeNames?: Record<string, string>
-    expressionAttributeValues?: Record<string, any>
+    expressionAttributeValues?: Record<string, AttributeValue>
     returnValuesOnConditionCheckFailure?: 'ALL_OLD' | 'NONE'
   }
   Update?: {
@@ -31,7 +30,7 @@ export interface TransactWriteItem {
     updateExpression: string
     conditionExpression?: string
     expressionAttributeNames?: Record<string, string>
-    expressionAttributeValues?: Record<string, any>
+    expressionAttributeValues?: Record<string, AttributeValue>
     returnValuesOnConditionCheckFailure?: 'ALL_OLD' | 'NONE'
   }
   Delete?: {
@@ -39,7 +38,7 @@ export interface TransactWriteItem {
     key: DynamoDBItem
     conditionExpression?: string
     expressionAttributeNames?: Record<string, string>
-    expressionAttributeValues?: Record<string, any>
+    expressionAttributeValues?: Record<string, AttributeValue>
     returnValuesOnConditionCheckFailure?: 'ALL_OLD' | 'NONE'
   }
   ConditionCheck?: {
@@ -47,7 +46,7 @@ export interface TransactWriteItem {
     key: DynamoDBItem
     conditionExpression: string
     expressionAttributeNames?: Record<string, string>
-    expressionAttributeValues?: Record<string, any>
+    expressionAttributeValues?: Record<string, AttributeValue>
     returnValuesOnConditionCheckFailure?: 'ALL_OLD' | 'NONE'
   }
 }
@@ -57,12 +56,6 @@ export interface TransactGetItem {
   key: DynamoDBItem
   projectionExpression?: string
   expressionAttributeNames?: Record<string, string>
-}
-
-export interface CancellationReason {
-  Code?: string
-  Message?: string
-  Item?: DynamoDBItem
 }
 
 export class TransactionCancelledError extends Error {
@@ -108,7 +101,7 @@ export interface PrepareRequest {
   updateExpression?: string // For Update
   conditionExpression?: string
   expressionAttributeNames?: Record<string, string>
-  expressionAttributeValues?: Record<string, any>
+  expressionAttributeValues?: Record<string, AttributeValue>
   returnValuesOnConditionCheckFailure?: 'ALL_OLD' | 'NONE'
 }
 
@@ -134,7 +127,7 @@ export interface CommitRequest {
   item?: DynamoDBItem // For Put/Update
   updateExpression?: string // For Update
   expressionAttributeNames?: Record<string, string>
-  expressionAttributeValues?: Record<string, any>
+  expressionAttributeValues?: Record<string, AttributeValue>
 }
 
 export interface ReleaseRequest {
@@ -163,8 +156,8 @@ export type SortKeyConditionOperator =
 
 export interface SortKeyCondition {
   operator: SortKeyConditionOperator
-  value: any // Single value for =, <, >, <=, >=, begins_with
-  value2?: any // Second value for BETWEEN
+  value: AttributeValue // Single value for =, <, >, <=, >=, begins_with
+  value2?: AttributeValue // Second value for BETWEEN
 }
 
 export interface QueryRequest {

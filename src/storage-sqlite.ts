@@ -100,10 +100,10 @@ export class ShardedSQLiteStorage implements StorageBackend {
   async scan(
     tableName: string,
     limit?: number,
-    exclusiveStartKey?: any
+    exclusiveStartKey?: DynamoDBItem
   ): Promise<{
     items: DynamoDBItem[]
-    lastEvaluatedKey?: any
+    lastEvaluatedKey?: DynamoDBItem
   }> {
     return await this.router.scan(tableName, limit, exclusiveStartKey)
   }
@@ -112,10 +112,10 @@ export class ShardedSQLiteStorage implements StorageBackend {
     tableName: string,
     keyCondition: (item: DynamoDBItem) => boolean,
     limit?: number,
-    exclusiveStartKey?: any
+    exclusiveStartKey?: DynamoDBItem
   ): Promise<{
     items: DynamoDBItem[]
-    lastEvaluatedKey?: any
+    lastEvaluatedKey?: DynamoDBItem
   }> {
     return await this.router.query(
       tableName,

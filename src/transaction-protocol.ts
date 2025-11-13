@@ -1,9 +1,10 @@
 // Two-Phase Commit (2PC) protocol helpers following DynamoDB's implementation
 
+import type { CancellationReason } from '@aws-sdk/client-dynamodb'
 import type {
   TransactWriteItem,
   PrepareRequest,
-  CancellationReason,
+  DynamoDBItem,
 } from './types.ts'
 
 // Generate unique transaction ID
@@ -99,7 +100,7 @@ export function transactItemToPrepareRequest(
 }
 
 // Helper to extract key from item (simplified - actual implementation needs schema)
-function extractKeyFromItem(item: any): any {
+function extractKeyFromItem(item: DynamoDBItem): DynamoDBItem {
   // This is a placeholder - actual implementation will need table schema
   // to know which attributes are part of the key
   return item

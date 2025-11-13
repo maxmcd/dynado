@@ -5,7 +5,11 @@ import type {
   DynamoDBItem,
   TransactWriteItem,
   TransactGetItem,
+  QueryRequest,
+  QueryResponse,
+  TableSchema,
 } from './types.ts'
+import type { AttributeDefinition, KeySchemaElement } from '@aws-sdk/client-dynamodb'
 import type { Shard } from './shard.ts'
 import type { MetadataStore } from './metadata-store.ts'
 import type { TransactionCoordinator } from './coordinator.ts'
@@ -30,8 +34,8 @@ export class Router {
 
   async createTable(
     tableName: string,
-    keySchema: any[],
-    attributeDefinitions: any[]
+    keySchema: KeySchemaElement[],
+    attributeDefinitions: AttributeDefinition[]
   ): Promise<void> {
     await this.metadataStore.createTable({
       tableName,
@@ -103,10 +107,10 @@ export class Router {
   async scan(
     tableName: string,
     limit?: number,
-    exclusiveStartKey?: any
+    exclusiveStartKey?: DynamoDBItem
   ): Promise<{
     items: DynamoDBItem[]
-    lastEvaluatedKey?: any
+    lastEvaluatedKey?: DynamoDBItem
   }> {
     // Fan out to all shards in parallel
     const shardResults = await Promise.all(
@@ -121,7 +125,7 @@ export class Router {
       const schema = await this.metadataStore.describeTable(tableName)
       if (schema) {
         const startKeyValue = this.getKeyString(exclusiveStartKey)
-        const startIndex = allItems.findIndex((item: any) => {
+        const startIndex = allItems.findIndex((item: DynamoDBItem) => {
           const itemKey = this.extractKey(schema.keySchema, item)
           const itemKeyString = this.getKeyString(itemKey)
           return itemKeyString === startKeyValue
@@ -156,10 +160,10 @@ export class Router {
     tableName: string,
     keyCondition: (item: DynamoDBItem) => boolean,
     limit?: number,
-    exclusiveStartKey?: any
+    exclusiveStartKey?: DynamoDBItem
   ): Promise<{
     items: DynamoDBItem[]
-    lastEvaluatedKey?: any
+    lastEvaluatedKey?: DynamoDBItem
   }> {
     // For simplicity, scan all shards and filter
     // In production, we'd optimize to only query relevant shards based on partition key
@@ -187,9 +191,7 @@ export class Router {
   }
 
   // New query method with range key support
-  async queryWithRangeKey(
-    request: import('./types.ts').QueryRequest
-  ): Promise<import('./types.ts').QueryResponse> {
+  async queryWithRangeKey(request: QueryRequest): Promise<QueryResponse> {
     // Route to the appropriate shard based on partition key
     const shardIndex = getShardIndex(
       request.partitionKeyValue,
@@ -426,16 +428,26 @@ export class Router {
     }
   }
 
-  private getKeyString(key: any): string {
+  private getKeyString(key: DynamoDBItem): string {
     const keyAttrs = Object.keys(key).sort()
     return keyAttrs.map((attr) => JSON.stringify(key[attr])).join('#')
   }
 
-  private extractKey(keySchema: any[], item: DynamoDBItem): any {
-    const key: any = {}
+  private extractKey(
+    keySchema: TableSchema['keySchema'],
+    item: DynamoDBItem
+  ): DynamoDBItem {
+    const key: DynamoDBItem = {}
     for (const schema of keySchema) {
       const attrName = schema.AttributeName
-      key[attrName] = item[attrName]
+      if (!attrName) {
+        throw new Error('Key schema missing AttributeName')
+      }
+      const value = item[attrName]
+      if (value === undefined) {
+        throw new Error(`Key attribute missing: ${attrName}`)
+      }
+      key[attrName] = value
     }
     return key
   }

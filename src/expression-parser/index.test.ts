@@ -196,17 +196,17 @@ describe('Condition Expression Evaluator', () => {
       const item: DynamoDBItem = { name: { S: 'Alice' } }
       expect(
         evaluateConditionExpression(item, 'size(name) = :len', undefined, {
-          ':len': 5,
+          ':len': { N: '5' },
         })
       ).toBe(true)
       expect(
         evaluateConditionExpression(item, 'size(name) > :len', undefined, {
-          ':len': 3,
+          ':len': { N: '3' },
         })
       ).toBe(true)
       expect(
         evaluateConditionExpression(item, 'size(name) < :len', undefined, {
-          ':len': 10,
+          ':len': { N: '10' },
         })
       ).toBe(true)
     })
@@ -218,7 +218,7 @@ describe('Condition Expression Evaluator', () => {
           item,
           'size(#name) = :len',
           { '#name': 'userName' },
-          { ':len': 3 }
+          { ':len': { N: '3' } }
         )
       ).toBe(true)
     })
@@ -227,7 +227,7 @@ describe('Condition Expression Evaluator', () => {
       const item: DynamoDBItem = { name: { S: 'Alice' } }
       expect(
         evaluateConditionExpression(item, 'size(missing) > :len', undefined, {
-          ':len': 0,
+          ':len': { N: '0' },
         })
       ).toBe(false)
     })
@@ -435,7 +435,7 @@ describe('Condition Expression Evaluator', () => {
           item,
           'size(emptyField) = :zero',
           undefined,
-          { ':zero': 0 }
+          { ':zero': { N: '0' } }
         )
       ).toBe(true)
     })
@@ -458,7 +458,7 @@ describe('Condition Expression Evaluator', () => {
       ).toBe(true)
       expect(
         evaluateConditionExpression(item, 'size(unicode) = :len', undefined, {
-          ':len': 4,
+          ':len': { N: '4' },
         })
       ).toBe(true)
     })
@@ -473,7 +473,7 @@ describe('Condition Expression Evaluator', () => {
     })
 
     test('should handle nested expression attribute names', () => {
-      const item: DynamoDBItem = { user: { name: { S: 'Alice' } } }
+      const item: DynamoDBItem = { user: { M: { name: { S: 'Alice' } } } }
       // This is a simplified test - full nested attribute support would require more work
       expect(evaluateConditionExpression(item, 'attribute_exists(user)')).toBe(
         true

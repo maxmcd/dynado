@@ -1,6 +1,7 @@
 // AST (Abstract Syntax Tree) node types for DynamoDB expressions
 
 import type { DynamoDBItem } from '../types.ts'
+import type { AttributeValue } from '@aws-sdk/client-dynamodb'
 
 // ============================================================================
 // Condition Expression AST
@@ -128,7 +129,7 @@ export interface AttributePath {
 
 export interface Value {
   type: 'value'
-  value: any // DynamoDB value format or literal
+  value: AttributeValue | string | number | boolean | null
 }
 
 // ============================================================================
@@ -138,5 +139,5 @@ export interface Value {
 export interface EvaluationContext {
   item: DynamoDBItem | null
   expressionAttributeNames?: Record<string, string>
-  expressionAttributeValues?: Record<string, any>
+  expressionAttributeValues?: Record<string, AttributeValue>
 }
