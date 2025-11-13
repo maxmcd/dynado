@@ -12,12 +12,16 @@ import {
 } from 'bun:test'
 import {
   DynamoDBClient,
-  CreateTableCommand,
-  DeleteTableCommand,
   PutItemCommand,
   QueryCommand,
 } from '@aws-sdk/client-dynamodb'
-import { getGlobalTestDB } from './test-global-setup.ts'
+import {
+  getGlobalTestDB,
+  createTable,
+  cleanupTables,
+  uniqueTableName,
+  trackTable,
+} from './helpers.ts'
 
 describe('Range Queries', () => {
   let client: DynamoDBClient
@@ -30,23 +34,17 @@ describe('Range Queries', () => {
 
   beforeEach(async () => {
     // Create table with composite key (partition + sort)
-    const tableName = `RangeTest_${Date.now()}`
-    createdTables.push(tableName)
-
-    await client.send(
-      new CreateTableCommand({
-        TableName: tableName,
-        KeySchema: [
-          { AttributeName: 'userId', KeyType: 'HASH' },
-          { AttributeName: 'timestamp', KeyType: 'RANGE' },
-        ],
-        AttributeDefinitions: [
-          { AttributeName: 'userId', AttributeType: 'S' },
-          { AttributeName: 'timestamp', AttributeType: 'N' },
-        ],
-        BillingMode: 'PAY_PER_REQUEST',
-      })
-    )
+    const tableName = trackTable(createdTables, uniqueTableName('RangeTest'))
+    await createTable(client, tableName, {
+      keySchema: [
+        { AttributeName: 'userId', KeyType: 'HASH' },
+        { AttributeName: 'timestamp', KeyType: 'RANGE' },
+      ],
+      attributeDefinitions: [
+        { AttributeName: 'userId', AttributeType: 'S' },
+        { AttributeName: 'timestamp', AttributeType: 'N' },
+      ],
+    })
 
     // Insert test data with various timestamps
     const testData = [
@@ -70,15 +68,7 @@ describe('Range Queries', () => {
   })
 
   afterEach(async () => {
-    // Clean up tables
-    for (const tableName of createdTables) {
-      try {
-        await client.send(new DeleteTableCommand({ TableName: tableName }))
-      } catch (error) {
-        // Ignore errors
-      }
-    }
-    createdTables.length = 0
+    await cleanupTables(client, createdTables)
   })
 
   function getTableName(): string {
@@ -230,23 +220,18 @@ describe('Range Queries', () => {
 
   test('should query with begins_with operator', async () => {
     // Create a table with string sort keys for begins_with testing
-    const tableName = `BeginsWith_${Date.now()}`
-    createdTables.push(tableName)
+    const tableName = trackTable(createdTables, uniqueTableName('BeginsWith'))
 
-    await client.send(
-      new CreateTableCommand({
-        TableName: tableName,
-        KeySchema: [
-          { AttributeName: 'category', KeyType: 'HASH' },
-          { AttributeName: 'itemId', KeyType: 'RANGE' },
-        ],
-        AttributeDefinitions: [
-          { AttributeName: 'category', AttributeType: 'S' },
-          { AttributeName: 'itemId', AttributeType: 'S' },
-        ],
-        BillingMode: 'PAY_PER_REQUEST',
-      })
-    )
+    await createTable(client, tableName, {
+      keySchema: [
+        { AttributeName: 'category', KeyType: 'HASH' },
+        { AttributeName: 'itemId', KeyType: 'RANGE' },
+      ],
+      attributeDefinitions: [
+        { AttributeName: 'category', AttributeType: 'S' },
+        { AttributeName: 'itemId', AttributeType: 'S' },
+      ],
+    })
 
     // Insert test data
     const items = [

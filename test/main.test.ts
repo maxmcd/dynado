@@ -22,73 +22,20 @@ import {
   BatchWriteItemCommand,
 } from '@aws-sdk/client-dynamodb'
 import CRC32 from 'crc-32'
-import { getGlobalTestDB } from './test-global-setup.ts'
+import {
+  getGlobalTestDB,
+  createTable,
+  createTableWithItems,
+  cleanupTables,
+  uniqueTableName,
+  trackTable,
+} from './helpers.ts'
 
 // Test helpers
-let tableCounter = 0
 const createdTables: string[] = []
 
 function getUniqueTableName(prefix: string = 'Test'): string {
-  const tableName = `${prefix}Table_${Date.now()}_${tableCounter++}`
-  createdTables.push(tableName)
-  return tableName
-}
-
-async function createTable(client: DynamoDBClient, tableName: string) {
-  await client.send(
-    new CreateTableCommand({
-      TableName: tableName,
-      KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-      AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-      BillingMode: 'PAY_PER_REQUEST',
-    })
-  )
-  return tableName
-}
-
-async function createTableWithItems(
-  client: DynamoDBClient,
-  tableName: string,
-  items: Array<{ id: string; [key: string]: any }>
-) {
-  await createTable(client, tableName)
-
-  for (const item of items) {
-    const dynamoItem: any = {}
-    for (const [key, value] of Object.entries(item)) {
-      if (typeof value === 'string') {
-        dynamoItem[key] = { S: value }
-      } else if (typeof value === 'number') {
-        dynamoItem[key] = { N: String(value) }
-      } else {
-        dynamoItem[key] = value
-      }
-    }
-
-    await client.send(
-      new PutItemCommand({
-        TableName: tableName,
-        Item: dynamoItem,
-      })
-    )
-  }
-
-  return tableName
-}
-
-async function deleteTable(client: DynamoDBClient, tableName: string) {
-  try {
-    await client.send(new DeleteTableCommand({ TableName: tableName }))
-  } catch (error) {
-    // Ignore errors if table doesn't exist
-  }
-}
-
-async function cleanupTables(client: DynamoDBClient) {
-  for (const tableName of createdTables) {
-    await deleteTable(client, tableName)
-  }
-  createdTables.length = 0
+  return trackTable(createdTables, uniqueTableName(`${prefix}Table`))
 }
 
 describe('DynamoDB Implementation', () => {
@@ -104,7 +51,7 @@ describe('DynamoDB Implementation', () => {
 
   afterEach(async () => {
     // Clean up all tables created during tests
-    await cleanupTables(client)
+    await cleanupTables(client, createdTables)
   })
 
   test('should list tables', async () => {

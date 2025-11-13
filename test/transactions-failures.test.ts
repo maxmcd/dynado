@@ -4,13 +4,12 @@
 import { test, expect, beforeAll, describe } from 'bun:test'
 import {
   DynamoDBClient,
-  CreateTableCommand,
   PutItemCommand,
   GetItemCommand,
   TransactWriteItemsCommand,
   TransactionCanceledException,
 } from '@aws-sdk/client-dynamodb'
-import { getGlobalTestDB } from './test-global-setup.ts'
+import { getGlobalTestDB, createTable, uniqueTableName } from './helpers.ts'
 import { MAX_ITEMS_PER_TRANSACTION } from '../src/index.ts'
 
 describe('2PC Failure Scenarios', () => {
@@ -18,9 +17,7 @@ describe('2PC Failure Scenarios', () => {
 
   // Helper to generate unique table names
   function getTableName(): string {
-    return `FailureTest_${Date.now()}_${Math.random()
-      .toString(36)
-      .substring(2, 9)}`
+    return uniqueTableName('FailureTest')
   }
 
   beforeAll(async () => {
@@ -30,14 +27,7 @@ describe('2PC Failure Scenarios', () => {
 
   test('should fail transaction when condition check fails', async () => {
     const tableName = getTableName()
-    await client.send(
-      new CreateTableCommand({
-        TableName: tableName,
-        KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-        AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-        BillingMode: 'PAY_PER_REQUEST',
-      })
-    )
+    await createTable(client, tableName)
 
     // Put an item first
     await client.send(
@@ -79,14 +69,7 @@ describe('2PC Failure Scenarios', () => {
 
   test('should rollback all items when one condition fails in multi-item transaction', async () => {
     const tableName = getTableName()
-    await client.send(
-      new CreateTableCommand({
-        TableName: tableName,
-        KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-        AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-        BillingMode: 'PAY_PER_REQUEST',
-      })
-    )
+    await createTable(client, tableName)
 
     // Put first item
     await client.send(
@@ -157,14 +140,7 @@ describe('2PC Failure Scenarios', () => {
 
   test('should handle timestamp conflicts correctly', async () => {
     const tableName = getTableName()
-    await client.send(
-      new CreateTableCommand({
-        TableName: tableName,
-        KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-        AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-        BillingMode: 'PAY_PER_REQUEST',
-      })
-    )
+    await createTable(client, tableName)
 
     // This test verifies that transactions with conflicting timestamps are rejected
     // Put an item
@@ -211,14 +187,7 @@ describe('2PC Failure Scenarios', () => {
     }
 
     const tableName = getTableName()
-    await client.send(
-      new CreateTableCommand({
-        TableName: tableName,
-        KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-        AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-        BillingMode: 'PAY_PER_REQUEST',
-      })
-    )
+    await createTable(client, tableName)
 
     // Put an item
     await client.send(
@@ -259,14 +228,7 @@ describe('2PC Failure Scenarios', () => {
 
   test('should handle Delete operation in transaction', async () => {
     const tableName = getTableName()
-    await client.send(
-      new CreateTableCommand({
-        TableName: tableName,
-        KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-        AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-        BillingMode: 'PAY_PER_REQUEST',
-      })
-    )
+    await createTable(client, tableName)
 
     // Put items
     await client.send(
@@ -323,14 +285,7 @@ describe('2PC Failure Scenarios', () => {
 
   test('should handle ConditionCheck operation', async () => {
     const tableName = getTableName()
-    await client.send(
-      new CreateTableCommand({
-        TableName: tableName,
-        KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-        AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-        BillingMode: 'PAY_PER_REQUEST',
-      })
-    )
+    await createTable(client, tableName)
 
     // Put an item
     await client.send(
@@ -375,14 +330,7 @@ describe('2PC Failure Scenarios', () => {
 
   test('should fail when ConditionCheck fails', async () => {
     const tableName = getTableName()
-    await client.send(
-      new CreateTableCommand({
-        TableName: tableName,
-        KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-        AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-        BillingMode: 'PAY_PER_REQUEST',
-      })
-    )
+    await createTable(client, tableName)
 
     // Put an item
     await client.send(
@@ -436,14 +384,7 @@ describe('2PC Failure Scenarios', () => {
       return
     }
     const tableName = getTableName()
-    await client.send(
-      new CreateTableCommand({
-        TableName: tableName,
-        KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-        AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-        BillingMode: 'PAY_PER_REQUEST',
-      })
-    )
+    await createTable(client, tableName)
 
     const clientToken = 'test-token-' + Date.now()
 
@@ -489,14 +430,7 @@ describe('2PC Failure Scenarios', () => {
 
   test('should validate transaction item limits', async () => {
     const tableName = getTableName()
-    await client.send(
-      new CreateTableCommand({
-        TableName: tableName,
-        KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-        AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-        BillingMode: 'PAY_PER_REQUEST',
-      })
-    )
+    await createTable(client, tableName)
 
     // Try to create transaction with > 100 items
     const items = []
@@ -537,14 +471,7 @@ describe('2PC Failure Scenarios', () => {
 
   test('should handle Update operation in transaction', async () => {
     const tableName = getTableName()
-    await client.send(
-      new CreateTableCommand({
-        TableName: tableName,
-        KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-        AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-        BillingMode: 'PAY_PER_REQUEST',
-      })
-    )
+    await createTable(client, tableName)
 
     // Put initial item
     await client.send(
@@ -583,14 +510,7 @@ describe('2PC Failure Scenarios', () => {
 
   test('should handle Update with condition', async () => {
     const tableName = getTableName()
-    await client.send(
-      new CreateTableCommand({
-        TableName: tableName,
-        KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-        AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-        BillingMode: 'PAY_PER_REQUEST',
-      })
-    )
+    await createTable(client, tableName)
 
     // Put initial item
     await client.send(

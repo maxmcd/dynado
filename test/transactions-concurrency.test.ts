@@ -4,23 +4,20 @@
 import { test, expect, beforeAll, describe } from 'bun:test'
 import {
   DynamoDBClient,
-  CreateTableCommand,
   PutItemCommand,
   GetItemCommand,
   TransactWriteItemsCommand,
   TransactGetItemsCommand,
   TransactionCanceledException,
 } from '@aws-sdk/client-dynamodb'
-import { getGlobalTestDB } from './test-global-setup.ts'
+import { getGlobalTestDB, createTable, uniqueTableName } from './helpers.ts'
 
 describe('Concurrent Transaction Conflicts', () => {
   let client: DynamoDBClient
 
   // Helper to generate unique table names
   function getTableName(): string {
-    return `ConcurrencyTest_${Date.now()}_${Math.random()
-      .toString(36)
-      .substring(2, 9)}`
+    return uniqueTableName('ConcurrencyTest')
   }
 
   beforeAll(async () => {
@@ -30,14 +27,7 @@ describe('Concurrent Transaction Conflicts', () => {
 
   test('should serialize concurrent transactions on same item', async () => {
     const tableName = getTableName()
-    await client.send(
-      new CreateTableCommand({
-        TableName: tableName,
-        KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-        AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-        BillingMode: 'PAY_PER_REQUEST',
-      })
-    )
+    await createTable(client, tableName)
 
     // Put initial item
     await client.send(
@@ -99,14 +89,7 @@ describe('Concurrent Transaction Conflicts', () => {
 
   test('should handle concurrent transactions on different items', async () => {
     const tableName = getTableName()
-    await client.send(
-      new CreateTableCommand({
-        TableName: tableName,
-        KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-        AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-        BillingMode: 'PAY_PER_REQUEST',
-      })
-    )
+    await createTable(client, tableName)
 
     // Multiple transactions on different items should all succeed
     const promises = []
@@ -144,14 +127,7 @@ describe('Concurrent Transaction Conflicts', () => {
 
   test('should handle race condition with Put operations', async () => {
     const tableName = getTableName()
-    await client.send(
-      new CreateTableCommand({
-        TableName: tableName,
-        KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-        AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-        BillingMode: 'PAY_PER_REQUEST',
-      })
-    )
+    await createTable(client, tableName)
 
     // Two transactions trying to create the same item with attribute_not_exists
     // Only one should succeed
@@ -206,14 +182,7 @@ describe('Concurrent Transaction Conflicts', () => {
 
   test('should handle bank transfer scenario correctly', async () => {
     const tableName = getTableName()
-    await client.send(
-      new CreateTableCommand({
-        TableName: tableName,
-        KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-        AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-        BillingMode: 'PAY_PER_REQUEST',
-      })
-    )
+    await createTable(client, tableName)
 
     // Classic bank transfer: deduct from A, add to B
     await client.send(
@@ -273,14 +242,7 @@ describe('Concurrent Transaction Conflicts', () => {
 
   test('should rollback bank transfer if insufficient funds', async () => {
     const tableName = getTableName()
-    await client.send(
-      new CreateTableCommand({
-        TableName: tableName,
-        KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-        AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-        BillingMode: 'PAY_PER_REQUEST',
-      })
-    )
+    await createTable(client, tableName)
 
     await client.send(
       new PutItemCommand({
@@ -345,14 +307,7 @@ describe('Concurrent Transaction Conflicts', () => {
 
   test('should handle multiple concurrent bank transfers', async () => {
     const tableName = getTableName()
-    await client.send(
-      new CreateTableCommand({
-        TableName: tableName,
-        KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-        AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-        BillingMode: 'PAY_PER_REQUEST',
-      })
-    )
+    await createTable(client, tableName)
 
     // Setup accounts
     await client.send(
@@ -439,14 +394,7 @@ describe('Concurrent Transaction Conflicts', () => {
 
   test('should handle concurrent reads (TransactGetItems)', async () => {
     const tableName = getTableName()
-    await client.send(
-      new CreateTableCommand({
-        TableName: tableName,
-        KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-        AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-        BillingMode: 'PAY_PER_REQUEST',
-      })
-    )
+    await createTable(client, tableName)
 
     // Setup items
     for (let i = 0; i < 5; i++) {
@@ -490,14 +438,7 @@ describe('Concurrent Transaction Conflicts', () => {
 
   test('should handle mixed concurrent reads and writes', async () => {
     const tableName = getTableName()
-    await client.send(
-      new CreateTableCommand({
-        TableName: tableName,
-        KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-        AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-        BillingMode: 'PAY_PER_REQUEST',
-      })
-    )
+    await createTable(client, tableName)
 
     await client.send(
       new PutItemCommand({
@@ -567,14 +508,7 @@ describe('Concurrent Transaction Conflicts', () => {
 
   test('should prevent lost updates with optimistic locking pattern', async () => {
     const tableName = getTableName()
-    await client.send(
-      new CreateTableCommand({
-        TableName: tableName,
-        KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-        AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-        BillingMode: 'PAY_PER_REQUEST',
-      })
-    )
+    await createTable(client, tableName)
 
     // Setup item with version number
     await client.send(

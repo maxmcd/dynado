@@ -4,20 +4,19 @@
 import { describe, test, expect, beforeAll } from 'bun:test'
 import {
   DynamoDBClient,
-  CreateTableCommand,
   PutItemCommand,
   GetItemCommand,
   TransactWriteItemsCommand,
   TransactGetItemsCommand,
   TransactionCanceledException,
 } from '@aws-sdk/client-dynamodb'
-import { getGlobalTestDB } from './test-global-setup.ts'
+import { getGlobalTestDB, createTable, uniqueTableName } from './helpers.ts'
 
 let client: DynamoDBClient
 
 // Helper to generate unique table names
 function getTableName(): string {
-  return `Test2PC_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
+  return uniqueTableName('Test2PC')
 }
 
 beforeAll(async () => {
@@ -29,14 +28,7 @@ describe('Two-Phase Commit Protocol', () => {
   describe('Transaction Conflicts', () => {
     test('should detect concurrent transaction conflict on same item', async () => {
       const tableName = getTableName()
-      await client.send(
-        new CreateTableCommand({
-          TableName: tableName,
-          KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-          AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-          BillingMode: 'PAY_PER_REQUEST',
-        })
-      )
+      await createTable(client, tableName)
 
       // Create an item
       await client.send(
@@ -91,14 +83,7 @@ describe('Two-Phase Commit Protocol', () => {
 
     test('should handle transaction on locked item', async () => {
       const tableName = getTableName()
-      await client.send(
-        new CreateTableCommand({
-          TableName: tableName,
-          KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-          AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-          BillingMode: 'PAY_PER_REQUEST',
-        })
-      )
+      await createTable(client, tableName)
 
       await client.send(
         new PutItemCommand({
@@ -136,14 +121,7 @@ describe('Two-Phase Commit Protocol', () => {
   describe('Condition Expression Validation', () => {
     test('should validate multiple condition types in one transaction', async () => {
       const tableName = getTableName()
-      await client.send(
-        new CreateTableCommand({
-          TableName: tableName,
-          KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-          AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-          BillingMode: 'PAY_PER_REQUEST',
-        })
-      )
+      await createTable(client, tableName)
 
       await client.send(
         new PutItemCommand({
@@ -202,14 +180,7 @@ describe('Two-Phase Commit Protocol', () => {
 
     test('should support comparison operators in conditions', async () => {
       const tableName = getTableName()
-      await client.send(
-        new CreateTableCommand({
-          TableName: tableName,
-          KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-          AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-          BillingMode: 'PAY_PER_REQUEST',
-        })
-      )
+      await createTable(client, tableName)
 
       await client.send(
         new PutItemCommand({
@@ -249,14 +220,7 @@ describe('Two-Phase Commit Protocol', () => {
 
     test('should handle NOT operator in conditions', async () => {
       const tableName = getTableName()
-      await client.send(
-        new CreateTableCommand({
-          TableName: tableName,
-          KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-          AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-          BillingMode: 'PAY_PER_REQUEST',
-        })
-      )
+      await createTable(client, tableName)
 
       await client.send(
         new PutItemCommand({
@@ -296,14 +260,7 @@ describe('Two-Phase Commit Protocol', () => {
 
     test('should handle AND operator in conditions', async () => {
       const tableName = getTableName()
-      await client.send(
-        new CreateTableCommand({
-          TableName: tableName,
-          KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-          AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-          BillingMode: 'PAY_PER_REQUEST',
-        })
-      )
+      await createTable(client, tableName)
 
       await client.send(
         new PutItemCommand({
@@ -351,14 +308,7 @@ describe('Two-Phase Commit Protocol', () => {
 
     test('should handle OR operator in conditions', async () => {
       const tableName = getTableName()
-      await client.send(
-        new CreateTableCommand({
-          TableName: tableName,
-          KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-          AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-          BillingMode: 'PAY_PER_REQUEST',
-        })
-      )
+      await createTable(client, tableName)
 
       await client.send(
         new PutItemCommand({
@@ -408,14 +358,7 @@ describe('Two-Phase Commit Protocol', () => {
         return
       }
       const tableName = getTableName()
-      await client.send(
-        new CreateTableCommand({
-          TableName: tableName,
-          KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-          AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-          BillingMode: 'PAY_PER_REQUEST',
-        })
-      )
+      await createTable(client, tableName)
 
       await client.send(
         new PutItemCommand({
@@ -463,14 +406,7 @@ describe('Two-Phase Commit Protocol', () => {
         return
       }
       const tableName = getTableName()
-      await client.send(
-        new CreateTableCommand({
-          TableName: tableName,
-          KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-          AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-          BillingMode: 'PAY_PER_REQUEST',
-        })
-      )
+      await createTable(client, tableName)
 
       await client.send(
         new PutItemCommand({
@@ -511,14 +447,7 @@ describe('Two-Phase Commit Protocol', () => {
         return
       }
       const tableName = getTableName()
-      await client.send(
-        new CreateTableCommand({
-          TableName: tableName,
-          KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-          AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-          BillingMode: 'PAY_PER_REQUEST',
-        })
-      )
+      await createTable(client, tableName)
 
       await client.send(
         new PutItemCommand({
@@ -563,14 +492,7 @@ describe('Two-Phase Commit Protocol', () => {
   describe('Update Expression Variants', () => {
     test('should handle multiple SET operations in one expression', async () => {
       const tableName = getTableName()
-      await client.send(
-        new CreateTableCommand({
-          TableName: tableName,
-          KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-          AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-          BillingMode: 'PAY_PER_REQUEST',
-        })
-      )
+      await createTable(client, tableName)
 
       await client.send(
         new PutItemCommand({
@@ -616,14 +538,7 @@ describe('Two-Phase Commit Protocol', () => {
 
     test('should handle multiple REMOVE operations', async () => {
       const tableName = getTableName()
-      await client.send(
-        new CreateTableCommand({
-          TableName: tableName,
-          KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-          AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-          BillingMode: 'PAY_PER_REQUEST',
-        })
-      )
+      await createTable(client, tableName)
 
       await client.send(
         new PutItemCommand({
@@ -664,14 +579,7 @@ describe('Two-Phase Commit Protocol', () => {
 
     test('should handle ADD operation on non-existent attribute', async () => {
       const tableName = getTableName()
-      await client.send(
-        new CreateTableCommand({
-          TableName: tableName,
-          KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-          AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-          BillingMode: 'PAY_PER_REQUEST',
-        })
-      )
+      await createTable(client, tableName)
 
       await client.send(
         new PutItemCommand({
@@ -707,14 +615,7 @@ describe('Two-Phase Commit Protocol', () => {
 
     test('should handle combined SET, REMOVE, and ADD operations', async () => {
       const tableName = getTableName()
-      await client.send(
-        new CreateTableCommand({
-          TableName: tableName,
-          KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-          AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-          BillingMode: 'PAY_PER_REQUEST',
-        })
-      )
+      await createTable(client, tableName)
 
       await client.send(
         new PutItemCommand({
@@ -764,14 +665,7 @@ describe('Two-Phase Commit Protocol', () => {
 
     test('should handle Update on non-existent item (creates new item)', async () => {
       const tableName = getTableName()
-      await client.send(
-        new CreateTableCommand({
-          TableName: tableName,
-          KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-          AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-          BillingMode: 'PAY_PER_REQUEST',
-        })
-      )
+      await createTable(client, tableName)
 
       await client.send(
         new TransactWriteItemsCommand({
@@ -803,14 +697,7 @@ describe('Two-Phase Commit Protocol', () => {
   describe('Cross-Shard Transactions', () => {
     test('should commit transaction spanning multiple shards', async () => {
       const tableName = getTableName()
-      await client.send(
-        new CreateTableCommand({
-          TableName: tableName,
-          KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-          AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-          BillingMode: 'PAY_PER_REQUEST',
-        })
-      )
+      await createTable(client, tableName)
 
       // Create items that will hash to different shards
       const itemIds = [
@@ -841,14 +728,7 @@ describe('Two-Phase Commit Protocol', () => {
 
     test('should rollback cross-shard transaction on any failure', async () => {
       const tableName = getTableName()
-      await client.send(
-        new CreateTableCommand({
-          TableName: tableName,
-          KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-          AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-          BillingMode: 'PAY_PER_REQUEST',
-        })
-      )
+      await createTable(client, tableName)
 
       // Create one item
       await client.send(
@@ -937,14 +817,7 @@ describe('Two-Phase Commit Protocol', () => {
   describe('Idempotency', () => {
     test('should cache transaction results for 10 minutes', async () => {
       const tableName = getTableName()
-      await client.send(
-        new CreateTableCommand({
-          TableName: tableName,
-          KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-          AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-          BillingMode: 'PAY_PER_REQUEST',
-        })
-      )
+      await createTable(client, tableName)
 
       const token = `idempotency-test-${Date.now()}`
 
@@ -1006,14 +879,7 @@ describe('Two-Phase Commit Protocol', () => {
 
     test('should execute transaction with different token', async () => {
       const tableName = getTableName()
-      await client.send(
-        new CreateTableCommand({
-          TableName: tableName,
-          KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-          AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-          BillingMode: 'PAY_PER_REQUEST',
-        })
-      )
+      await createTable(client, tableName)
 
       const token1 = `token-1-${Date.now()}`
       const token2 = `token-2-${Date.now()}`
@@ -1067,14 +933,7 @@ describe('Two-Phase Commit Protocol', () => {
 
     test('should handle failed transaction idempotency', async () => {
       const tableName = getTableName()
-      await client.send(
-        new CreateTableCommand({
-          TableName: tableName,
-          KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-          AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-          BillingMode: 'PAY_PER_REQUEST',
-        })
-      )
+      await createTable(client, tableName)
 
       await client.send(
         new PutItemCommand({
@@ -1144,14 +1003,7 @@ describe('Two-Phase Commit Protocol', () => {
   describe('Edge Cases', () => {
     test('should handle empty update expression attributes', async () => {
       const tableName = getTableName()
-      await client.send(
-        new CreateTableCommand({
-          TableName: tableName,
-          KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-          AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-          BillingMode: 'PAY_PER_REQUEST',
-        })
-      )
+      await createTable(client, tableName)
 
       await client.send(
         new PutItemCommand({
@@ -1187,14 +1039,7 @@ describe('Two-Phase Commit Protocol', () => {
 
     test('should handle transaction with single item', async () => {
       const tableName = getTableName()
-      await client.send(
-        new CreateTableCommand({
-          TableName: tableName,
-          KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-          AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-          BillingMode: 'PAY_PER_REQUEST',
-        })
-      )
+      await createTable(client, tableName)
 
       await client.send(
         new TransactWriteItemsCommand({
@@ -1220,14 +1065,7 @@ describe('Two-Phase Commit Protocol', () => {
 
     test('should handle Delete operation on non-existent item', async () => {
       const tableName = getTableName()
-      await client.send(
-        new CreateTableCommand({
-          TableName: tableName,
-          KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-          AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-          BillingMode: 'PAY_PER_REQUEST',
-        })
-      )
+      await createTable(client, tableName)
 
       // Should succeed (DynamoDB behavior)
       await client.send(
@@ -1246,14 +1084,7 @@ describe('Two-Phase Commit Protocol', () => {
 
     test('should handle Put with condition on non-existent item', async () => {
       const tableName = getTableName()
-      await client.send(
-        new CreateTableCommand({
-          TableName: tableName,
-          KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-          AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-          BillingMode: 'PAY_PER_REQUEST',
-        })
-      )
+      await createTable(client, tableName)
 
       await client.send(
         new TransactWriteItemsCommand({
@@ -1280,14 +1111,7 @@ describe('Two-Phase Commit Protocol', () => {
 
     test('should validate attribute names with special characters', async () => {
       const tableName = getTableName()
-      await client.send(
-        new CreateTableCommand({
-          TableName: tableName,
-          KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-          AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-          BillingMode: 'PAY_PER_REQUEST',
-        })
-      )
+      await createTable(client, tableName)
 
       await client.send(
         new PutItemCommand({
@@ -1328,14 +1152,7 @@ describe('Two-Phase Commit Protocol', () => {
   describe('TransactGetItems', () => {
     test('should get items from multiple shards atomically', async () => {
       const tableName = getTableName()
-      await client.send(
-        new CreateTableCommand({
-          TableName: tableName,
-          KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-          AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-          BillingMode: 'PAY_PER_REQUEST',
-        })
-      )
+      await createTable(client, tableName)
 
       // Create items across different shards
       const itemIds = ['get-1', 'get-2', 'get-3', 'get-4', 'get-5']
@@ -1370,14 +1187,7 @@ describe('Two-Phase Commit Protocol', () => {
 
     test('should apply projection to subset of attributes', async () => {
       const tableName = getTableName()
-      await client.send(
-        new CreateTableCommand({
-          TableName: tableName,
-          KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-          AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-          BillingMode: 'PAY_PER_REQUEST',
-        })
-      )
+      await createTable(client, tableName)
 
       await client.send(
         new PutItemCommand({
@@ -1413,14 +1223,7 @@ describe('Two-Phase Commit Protocol', () => {
 
     test('should handle projection with attribute name placeholders', async () => {
       const tableName = getTableName()
-      await client.send(
-        new CreateTableCommand({
-          TableName: tableName,
-          KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-          AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-          BillingMode: 'PAY_PER_REQUEST',
-        })
-      )
+      await createTable(client, tableName)
 
       await client.send(
         new PutItemCommand({
@@ -1457,14 +1260,7 @@ describe('Two-Phase Commit Protocol', () => {
 
     test('should return empty Item for non-existent items in the result array', async () => {
       const tableName = getTableName()
-      await client.send(
-        new CreateTableCommand({
-          TableName: tableName,
-          KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-          AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-          BillingMode: 'PAY_PER_REQUEST',
-        })
-      )
+      await createTable(client, tableName)
 
       await client.send(
         new PutItemCommand({
@@ -1498,14 +1294,7 @@ describe('Two-Phase Commit Protocol', () => {
 
     test('should respect 100 item limit for TransactGetItems', async () => {
       const tableName = getTableName()
-      await client.send(
-        new CreateTableCommand({
-          TableName: tableName,
-          KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-          AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-          BillingMode: 'PAY_PER_REQUEST',
-        })
-      )
+      await createTable(client, tableName)
 
       const items = []
       for (let i = 0; i < 101; i++) {
@@ -1529,14 +1318,7 @@ describe('Two-Phase Commit Protocol', () => {
   describe('Complex Scenarios', () => {
     test('should handle workflow pattern with condition checks', async () => {
       const tableName = getTableName()
-      await client.send(
-        new CreateTableCommand({
-          TableName: tableName,
-          KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-          AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-          BillingMode: 'PAY_PER_REQUEST',
-        })
-      )
+      await createTable(client, tableName)
 
       // Create initial workflow state
       await client.send(
@@ -1587,14 +1369,7 @@ describe('Two-Phase Commit Protocol', () => {
 
     test('should handle inventory deduction pattern', async () => {
       const tableName = getTableName()
-      await client.send(
-        new CreateTableCommand({
-          TableName: tableName,
-          KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-          AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-          BillingMode: 'PAY_PER_REQUEST',
-        })
-      )
+      await createTable(client, tableName)
 
       // Setup: inventory and order tracking
       await client.send(
@@ -1666,14 +1441,7 @@ describe('Two-Phase Commit Protocol', () => {
 
     test('should rollback when inventory is insufficient', async () => {
       const tableName = getTableName()
-      await client.send(
-        new CreateTableCommand({
-          TableName: tableName,
-          KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-          AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-          BillingMode: 'PAY_PER_REQUEST',
-        })
-      )
+      await createTable(client, tableName)
 
       await client.send(
         new PutItemCommand({

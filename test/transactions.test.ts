@@ -12,14 +12,18 @@ import {
 } from 'bun:test'
 import {
   DynamoDBClient,
-  CreateTableCommand,
-  DeleteTableCommand,
   PutItemCommand,
   GetItemCommand,
   TransactWriteItemsCommand,
   TransactGetItemsCommand,
 } from '@aws-sdk/client-dynamodb'
-import { getGlobalTestDB } from './test-global-setup.ts'
+import {
+  getGlobalTestDB,
+  createTable,
+  cleanupTables,
+  uniqueTableName,
+  trackTable,
+} from './helpers.ts'
 
 describe('Transaction Operations', () => {
   let client: DynamoDBClient
@@ -31,30 +35,12 @@ describe('Transaction Operations', () => {
   })
 
   beforeEach(async () => {
-    // Create test table
-    const tableName = `TransactTest_${Date.now()}`
-    createdTables.push(tableName)
-
-    await client.send(
-      new CreateTableCommand({
-        TableName: tableName,
-        KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-        AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-        BillingMode: 'PAY_PER_REQUEST',
-      })
-    )
+    const tableName = trackTable(createdTables, uniqueTableName('TransactTest'))
+    await createTable(client, tableName)
   })
 
   afterEach(async () => {
-    // Clean up tables
-    for (const tableName of createdTables) {
-      try {
-        await client.send(new DeleteTableCommand({ TableName: tableName }))
-      } catch (error) {
-        // Ignore errors
-      }
-    }
-    createdTables.length = 0
+    await cleanupTables(client, createdTables)
   })
 
   function getTableName(): string {

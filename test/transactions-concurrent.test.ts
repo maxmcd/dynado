@@ -4,23 +4,20 @@
 import { describe, test, expect, beforeAll } from 'bun:test'
 import {
   DynamoDBClient,
-  CreateTableCommand,
   PutItemCommand,
   GetItemCommand,
   TransactWriteItemsCommand,
   TransactGetItemsCommand,
   TransactionCanceledException,
 } from '@aws-sdk/client-dynamodb'
-import { getGlobalTestDB } from './test-global-setup.ts'
+import { getGlobalTestDB, createTable, uniqueTableName } from './helpers.ts'
 
 const VERBOSE = process.env.VERBOSE_TESTS === 'true'
 let client: DynamoDBClient
 
 // Helper to generate unique table names
 function getTableName(): string {
-  return `ConcurrentTest_${Date.now()}_${Math.random()
-    .toString(36)
-    .substring(2, 9)}`
+  return uniqueTableName('ConcurrentTest')
 }
 
 // Helper to generate random int between min and max (inclusive)
@@ -52,14 +49,7 @@ describe('Concurrent Transaction Tests', () => {
     const CONCURRENT_WORKERS = 15
 
     // Create table
-    await client.send(
-      new CreateTableCommand({
-        TableName: tableName,
-        KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-        AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-        BillingMode: 'PAY_PER_REQUEST',
-      })
-    )
+    await createTable(client, tableName)
 
     // Setup: Create bank accounts
     const accountIds: string[] = []
@@ -250,14 +240,7 @@ describe('Concurrent Transaction Tests', () => {
     const NUM_WORKERS = 30
 
     // Create table
-    await client.send(
-      new CreateTableCommand({
-        TableName: tableName,
-        KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-        AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-        BillingMode: 'PAY_PER_REQUEST',
-      })
-    )
+    await createTable(client, tableName)
 
     // Setup: Create counters
     const counterIds: string[] = []
@@ -398,14 +381,7 @@ describe('Concurrent Transaction Tests', () => {
     const NUM_WORKERS = 50
 
     // Create table
-    await client.send(
-      new CreateTableCommand({
-        TableName: tableName,
-        KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-        AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-        BillingMode: 'PAY_PER_REQUEST',
-      })
-    )
+    await createTable(client, tableName)
 
     // Setup: Create unclaimed items
     const itemIds: string[] = []
@@ -530,14 +506,7 @@ describe('Concurrent Transaction Tests', () => {
     const NUM_WORKERS = 15
 
     // Create table
-    await client.send(
-      new CreateTableCommand({
-        TableName: tableName,
-        KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-        AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-        BillingMode: 'PAY_PER_REQUEST',
-      })
-    )
+    await createTable(client, tableName)
 
     // Track all items that should exist if transaction succeeded
     const expectedItems = new Set<string>()
@@ -668,14 +637,7 @@ describe('Concurrent Transaction Tests', () => {
     const NUM_WORKERS = 30
 
     // Create table
-    await client.send(
-      new CreateTableCommand({
-        TableName: tableName,
-        KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-        AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-        BillingMode: 'PAY_PER_REQUEST',
-      })
-    )
+    await createTable(client, tableName)
 
     // Setup: Create items with version numbers
     const itemIds: string[] = []

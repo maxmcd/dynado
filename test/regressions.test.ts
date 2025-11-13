@@ -18,7 +18,14 @@ import {
   TransactWriteItemsCommand,
   TransactionCanceledException,
 } from '@aws-sdk/client-dynamodb'
-import { getGlobalTestDB, cleanupGlobalTestDB } from './test-global-setup.ts'
+import {
+  getGlobalTestDB,
+  cleanupGlobalTestDB,
+  createTable,
+  cleanupTables,
+  uniqueTableName,
+  trackTable,
+} from './helpers.ts'
 
 describe('HTTP regression coverage', () => {
   let client: DynamoDBClient
@@ -30,38 +37,19 @@ describe('HTTP regression coverage', () => {
   })
 
   afterEach(async () => {
-    for (const tableName of createdTables) {
-      try {
-        await client.send(new DeleteTableCommand({ TableName: tableName }))
-      } catch {
-        // best effort cleanup
-      }
-    }
-    createdTables.length = 0
+    await cleanupTables(client, createdTables)
   })
 
   afterAll(async () => {
     await cleanupGlobalTestDB()
   })
 
-  function uniqueTableName(prefix = 'Regression'): string {
-    const name = `${prefix}_${Date.now()}_${Math.random()
-      .toString(36)
-      .slice(2, 8)}`
-    createdTables.push(name)
-    return name
-  }
-
   async function createSimpleTable(): Promise<string> {
-    const tableName = uniqueTableName()
-    await client.send(
-      new CreateTableCommand({
-        TableName: tableName,
-        KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-        AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-        BillingMode: 'PAY_PER_REQUEST',
-      })
+    const tableName = trackTable(
+      createdTables,
+      uniqueTableName('RegressionTable')
     )
+    await createTable(client, tableName)
     return tableName
   }
 
