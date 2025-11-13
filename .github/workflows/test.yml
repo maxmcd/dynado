@@ -9,17 +9,13 @@ jobs:
       - uses: actions/checkout@v4
       - name: Set up Go
         uses: actions/setup-go@v5
-        with: { go-version: "stable", cache: true }
+        with: { go-version: 'stable', cache: true }
       - name: Set up Bun
         uses: oven-sh/setup-bun@v1
         with: { bun-version: latest }
-      - name: Install dependencies
-        run: bun install
-      - name: lint
-        run: bun x tsc
-      - name: Run Bun tests
-        run: bun test
-      - name: Run Bun tests with DynamoDB Local
-        run: TEST_DYNAMODB_LOCAL=true bun test --timeout=60000
-      - name: Run Go tests
-        run: go test -v ./...
+      - run: bun install
+      - run: bun x tsc
+      - run: bun x prettier --check ./src ./test
+      - run: bun test
+      - run: TEST_DYNAMODB_LOCAL=true bun test --timeout=60000
+      - run: go test -v ./...
