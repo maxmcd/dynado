@@ -28,7 +28,7 @@ class UpdateExpressionParser extends CstParser {
     this.performSelfAnalysis()
   }
 
-  // Top-level update expression: can have SET, REMOVE, ADD, DELETE in any order
+  // Top-level update expression: can have SET, REMOVE, ADD, DELETE in arbitrary order
   public updateExpression = this.RULE('updateExpression', () => {
     this.MANY(() => {
       this.OR([

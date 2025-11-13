@@ -15,9 +15,11 @@ export type ConditionExpression =
   | BetweenExpression
   | InExpression
 
+export type ComparisonOperator = '=' | '<>' | '<' | '>' | '<=' | '>='
+
 export interface ComparisonExpression {
   type: 'comparison'
-  operator: '=' | '<>' | '<' | '>' | '<=' | '>='
+  operator: ComparisonOperator
   left: AttributePath
   right: Value
 }
@@ -43,7 +45,7 @@ export interface FunctionExpression {
     | 'contains'
     | 'size'
     | 'attribute_type'
-  args: (AttributePath | Value)[]
+  args: (AttributePath | Value | ComparisonOperator)[]
 }
 
 export interface BetweenExpression {

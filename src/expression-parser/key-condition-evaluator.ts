@@ -7,9 +7,7 @@ import {
   type KeyConditionAST,
 } from './key-condition-visitor.ts'
 import type { DynamoDBItem } from '../types.ts'
-
-// DynamoDB attribute value type
-type DynamoDBAttributeValue = any
+import type { AttributeValue } from '@aws-sdk/client-dynamodb'
 
 function resolveAttributeName(
   name: string,
@@ -23,8 +21,8 @@ function resolveAttributeName(
 
 function resolveAttributeValue(
   ref: string,
-  expressionAttributeValues?: Record<string, DynamoDBAttributeValue>
-): DynamoDBAttributeValue | undefined {
+  expressionAttributeValues?: Record<string, AttributeValue>
+): AttributeValue | undefined {
   if (ref.startsWith(':') && expressionAttributeValues) {
     return expressionAttributeValues[ref]
   }
@@ -32,8 +30,8 @@ function resolveAttributeValue(
 }
 
 function compareValues(
-  itemValue: DynamoDBAttributeValue,
-  compareValue: DynamoDBAttributeValue,
+  itemValue: AttributeValue,
+  compareValue: AttributeValue,
   operator: string
 ): boolean {
   // Handle string comparisons
@@ -87,7 +85,7 @@ export function evaluateKeyCondition(
   item: DynamoDBItem,
   keyConditionExpression: string,
   expressionAttributeNames?: Record<string, string>,
-  expressionAttributeValues?: Record<string, DynamoDBAttributeValue>
+  expressionAttributeValues?: Record<string, AttributeValue>
 ): boolean {
   if (!keyConditionExpression) {
     return true

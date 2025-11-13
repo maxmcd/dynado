@@ -13,6 +13,17 @@ import type {
   EvaluationContext,
 } from './ast.ts'
 import type { DynamoDBItem } from '../types.ts'
+import type { AttributeValue } from '@aws-sdk/client-dynamodb'
+import type { ComparisonOperator } from './ast.ts'
+
+type AttributeValueLike =
+  | AttributeValue
+  | string
+  | number
+  | boolean
+  | null
+  | AttributeValueLike[]
+  | { [key: string]: AttributeValueLike }
 
 export function evaluateCondition(
   expression: ConditionExpression,
@@ -31,8 +42,16 @@ export function evaluateCondition(
       return evaluateBetween(expression, context)
     case 'in':
       return evaluateIn(expression, context)
-    default:
-      throw new Error(`Unknown expression type: ${(expression as any).type}`)
+    default: {
+      const _exhaustive: never = expression
+      throw new Error(
+        `Unknown expression type: ${
+          typeof _exhaustive === 'object' && _exhaustive
+            ? ((_exhaustive as { type?: string }).type ?? 'unknown')
+            : 'unknown'
+        }`
+      )
+    }
   }
 }
 
@@ -109,10 +128,10 @@ function evaluateFunction(
 
       if (!attrValue || !prefixValue) return false
 
-      const attrStr = attrValue.S || attrValue
-      const prefixStr = prefixValue.S || prefixValue
+      const attrStr = getStringValue(attrValue)
+      const prefixStr = getStringValue(prefixValue)
 
-      if (typeof attrStr === 'string' && typeof prefixStr === 'string') {
+      if (attrStr !== null && prefixStr !== null) {
         return attrStr.startsWith(prefixStr)
       }
 
@@ -129,16 +148,25 @@ function evaluateFunction(
       if (!attrValue || !searchValue) return false
 
       // String contains
-      const attrStr = attrValue.S || attrValue
-      const searchStr = searchValue.S || searchValue
+      const attrStr = getStringValue(attrValue)
+      const searchStr = getStringValue(searchValue)
 
-      if (typeof attrStr === 'string' && typeof searchStr === 'string') {
+      if (attrStr !== null && searchStr !== null) {
         return attrStr.includes(searchStr)
       }
 
       // List contains
-      if (Array.isArray(attrValue)) {
-        return attrValue.some(
+      const listValues = Array.isArray(attrValue)
+        ? attrValue
+        : typeof attrValue === 'object' &&
+            attrValue !== null &&
+            'L' in attrValue &&
+            Array.isArray(attrValue.L)
+          ? (attrValue.L as AttributeValueLike[])
+          : undefined
+
+      if (listValues) {
+        return listValues.some(
           (v) => JSON.stringify(v) === JSON.stringify(searchValue)
         )
       }
@@ -148,7 +176,7 @@ function evaluateFunction(
 
     case 'size': {
       const path = expr.args[0] as AttributePath
-      const operator = expr.args[1] as any // operator string
+      const operatorArg = expr.args[1]
       const valueArg = expr.args[2] as Value
 
       const attrValue = getAttributeValue(path, context)
@@ -157,21 +185,35 @@ function evaluateFunction(
       if (!attrValue) return false
 
       let size = 0
-      if (typeof attrValue === 'string' || attrValue.S) {
-        size = (attrValue.S || attrValue).length
+      if (typeof attrValue === 'string') {
+        size = attrValue.length
+      } else if (
+        typeof attrValue === 'object' &&
+        attrValue !== null &&
+        'S' in attrValue &&
+        typeof attrValue.S === 'string'
+      ) {
+        size = attrValue.S.length
       } else if (Array.isArray(attrValue)) {
         size = attrValue.length
-      } else if (attrValue.L) {
+      } else if (
+        typeof attrValue === 'object' &&
+        attrValue !== null &&
+        'L' in attrValue &&
+        Array.isArray(attrValue.L)
+      ) {
         size = attrValue.L.length
       }
 
-      const compareNum =
-        typeof compareValue === 'number'
-          ? compareValue
-          : parseInt(compareValue?.N || '0')
+      const compareNum = getNumericValue(compareValue)
+      if (compareNum === null) {
+        return false
+      }
+
+      const operator = isComparisonOperator(operatorArg) ? operatorArg : '='
 
       // operator is the comparison operator token
-      switch (operator.type === 'value' ? operator.value : operator) {
+      switch (operator) {
         case '=':
           return size === compareNum
         case '<>':
@@ -199,7 +241,8 @@ function evaluateFunction(
       if (!attrValue) return false
 
       const actualType = getAttributeType(attrValue)
-      const expectedTypeStr = expectedType.S || expectedType
+      const expectedTypeStr = getStringValue(expectedType)
+      if (!expectedTypeStr) return false
 
       return actualType === expectedTypeStr
     }
@@ -254,14 +297,17 @@ function resolveAttributeName(
 function getAttributeValue(
   path: AttributePath,
   context: EvaluationContext
-): any {
+): AttributeValueLike | undefined {
   if (!context.item) return undefined
 
   const attrName = resolveAttributeName(path.name, context)
   return context.item[attrName]
 }
 
-function resolveValue(value: Value, context: EvaluationContext): any {
+function resolveValue(
+  value: Value,
+  context: EvaluationContext
+): AttributeValueLike | undefined {
   if (typeof value.value === 'string' && value.value.startsWith(':')) {
     // Expression attribute value
     return context.expressionAttributeValues?.[value.value]
@@ -269,7 +315,10 @@ function resolveValue(value: Value, context: EvaluationContext): any {
   return value.value
 }
 
-function compareValues(a: any, b: any): number {
+function compareValues(
+  a: AttributeValueLike | undefined,
+  b: AttributeValueLike | undefined
+): number {
   // Get numeric values
   const aNum = getNumericValue(a)
   const bNum = getNumericValue(b)
@@ -292,10 +341,10 @@ function compareValues(a: any, b: any): number {
   return aJson.localeCompare(bJson)
 }
 
-function getNumericValue(value: any): number | null {
+function getNumericValue(value: AttributeValueLike | undefined): number | null {
   if (value === null || value === undefined) return null
 
-  if (value.N) {
+  if (hasNumericAttribute(value)) {
     const num = parseFloat(value.N)
     return isNaN(num) ? null : num
   }
@@ -312,10 +361,15 @@ function getNumericValue(value: any): number | null {
   return null
 }
 
-function getStringValue(value: any): string | null {
+function getStringValue(value: AttributeValueLike | undefined): string | null {
   if (value === null || value === undefined) return null
 
-  if (value.S) {
+  if (
+    typeof value === 'object' &&
+    value !== null &&
+    'S' in value &&
+    typeof value.S === 'string'
+  ) {
     return value.S
   }
 
@@ -326,16 +380,40 @@ function getStringValue(value: any): string | null {
   return null
 }
 
-function getAttributeType(value: any): string {
-  if (value.S !== undefined) return 'S'
-  if (value.N !== undefined) return 'N'
-  if (value.B !== undefined) return 'B'
-  if (value.SS !== undefined) return 'SS'
-  if (value.NS !== undefined) return 'NS'
-  if (value.BS !== undefined) return 'BS'
-  if (value.M !== undefined) return 'M'
-  if (value.L !== undefined) return 'L'
-  if (value.NULL !== undefined) return 'NULL'
-  if (value.BOOL !== undefined) return 'BOOL'
+function getAttributeType(value: AttributeValueLike): string {
+  if (typeof value !== 'object' || value === null) {
+    return 'UNKNOWN'
+  }
+  if ('S' in value && value.S !== undefined) return 'S'
+  if ('N' in value && value.N !== undefined) return 'N'
+  if ('B' in value && value.B !== undefined) return 'B'
+  if ('SS' in value && value.SS !== undefined) return 'SS'
+  if ('NS' in value && value.NS !== undefined) return 'NS'
+  if ('BS' in value && value.BS !== undefined) return 'BS'
+  if ('M' in value && value.M !== undefined) return 'M'
+  if ('L' in value && value.L !== undefined) return 'L'
+  if ('NULL' in value && value.NULL !== undefined) return 'NULL'
+  if ('BOOL' in value && value.BOOL !== undefined) return 'BOOL'
   return 'UNKNOWN'
+}
+
+function isComparisonOperator(value: unknown): value is ComparisonOperator {
+  return (
+    value === '=' ||
+    value === '<>' ||
+    value === '<' ||
+    value === '>' ||
+    value === '<=' ||
+    value === '>='
+  )
+}
+function hasNumericAttribute(
+  value: AttributeValueLike | undefined
+): value is { N: string } {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'N' in value &&
+    typeof (value as { N?: unknown }).N === 'string'
+  )
 }

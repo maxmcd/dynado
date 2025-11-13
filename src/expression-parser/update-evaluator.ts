@@ -15,6 +15,7 @@ import type {
   EvaluationContext,
 } from './ast.ts'
 import type { DynamoDBItem } from '../types.ts'
+import type { AttributeValue } from '@aws-sdk/client-dynamodb'
 
 export function applyUpdateExpression(
   item: DynamoDBItem,
@@ -71,7 +72,7 @@ function evaluateSetValue(
   item: DynamoDBItem,
   value: SetValue,
   context: EvaluationContext
-): any {
+): AttributeValue | undefined {
   // Arithmetic expression
   if (value.type === 'arithmetic') {
     const expr = value as ArithmeticExpression
@@ -108,9 +109,8 @@ function evaluateSetValue(
     const list1 = resolveOperand(item, expr.list1, context)
     const list2 = resolveOperand(item, expr.list2, context)
 
-    // Get arrays from DynamoDB list format or native arrays
-    const arr1 = list1?.L || (Array.isArray(list1) ? list1 : [])
-    const arr2 = list2?.L || (Array.isArray(list2) ? list2 : [])
+    const arr1 = toAttributeValueArray(list1)
+    const arr2 = toAttributeValueArray(list2)
 
     return { L: [...arr1, ...arr2] }
   }
@@ -140,10 +140,12 @@ function applyAddAction(
   const attrName = resolveAttributeName(action.path.name, context)
   const addValue = resolveValue(action.value, context)
 
-  if (!addValue || !addValue.N) return
+  if (!isNumberAttribute(addValue)) return
 
   const currentValue = item[attrName]
-  const currentNum = currentValue?.N ? parseInt(currentValue.N) : 0
+  const currentNum = isNumberAttribute(currentValue)
+    ? parseInt(currentValue.N)
+    : 0
   const addNum = parseInt(addValue.N)
 
   item[attrName] = { N: String(currentNum + addNum) }
@@ -175,19 +177,25 @@ function resolveAttributeName(
   return name
 }
 
-function resolveValue(value: Value, context: EvaluationContext): any {
+function resolveValue(
+  value: Value,
+  context: EvaluationContext
+): AttributeValue | undefined {
   if (typeof value.value === 'string' && value.value.startsWith(':')) {
     // Expression attribute value
     return context.expressionAttributeValues?.[value.value]
   }
-  return value.value
+  if (typeof value.value === 'object' && value.value !== null) {
+    return value.value as AttributeValue
+  }
+  return undefined
 }
 
 function resolveOperand(
   item: DynamoDBItem,
   operand: AttributePath | Value,
   context: EvaluationContext
-): any {
+): AttributeValue | AttributeValue[] | undefined {
   if (operand.type === 'attribute_path') {
     const attrName = resolveAttributeName(operand.name, context)
     return item[attrName]
@@ -200,10 +208,21 @@ function resolveOperand(
   return undefined
 }
 
-function getNumericValue(value: any): number | null {
+function getNumericValue(
+  value: AttributeValue | AttributeValue[] | undefined
+): number | null {
   if (value === null || value === undefined) return null
 
-  if (value.N) {
+  if (Array.isArray(value)) {
+    return null
+  }
+
+  if (
+    typeof value === 'object' &&
+    value !== null &&
+    'N' in value &&
+    value.N !== undefined
+  ) {
     const num = parseFloat(value.N)
     return isNaN(num) ? null : num
   }
@@ -218,4 +237,33 @@ function getNumericValue(value: any): number | null {
   }
 
   return null
+}
+
+function toAttributeValueArray(
+  value: AttributeValue | AttributeValue[] | undefined
+): AttributeValue[] {
+  if (!value) return []
+  if (Array.isArray(value)) {
+    return value
+  }
+  if (
+    typeof value === 'object' &&
+    value !== null &&
+    'L' in value &&
+    Array.isArray(value.L)
+  ) {
+    return value.L as AttributeValue[]
+  }
+  return []
+}
+
+function isNumberAttribute(
+  value: AttributeValue | undefined
+): value is AttributeValue & { N: string } {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'N' in value &&
+    typeof value.N === 'string'
+  )
 }

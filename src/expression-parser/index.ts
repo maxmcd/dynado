@@ -62,10 +62,12 @@ export function evaluateConditionExpression(
     }
 
     return evaluateCondition(ast, context)
-  } catch (error: any) {
+  } catch (error: unknown) {
     // Provide helpful error message
+    const message =
+      error instanceof Error ? error.message : 'Unknown evaluation error'
     throw new Error(
-      `Failed to evaluate condition expression "${conditionExpression}": ${error.message}`
+      `Failed to evaluate condition expression "${conditionExpression}": ${message}`
     )
   }
 }
@@ -116,10 +118,12 @@ export function applyUpdateExpressionToItem(
     }
 
     return applyUpdateExpression(item, ast, context)
-  } catch (error: any) {
+  } catch (error: unknown) {
     // Provide helpful error message
+    const message =
+      error instanceof Error ? error.message : 'Unknown update error'
     throw new Error(
-      `Failed to apply update expression "${updateExpression}": ${error.message}`
+      `Failed to apply update expression "${updateExpression}": ${message}`
     )
   }
 }
