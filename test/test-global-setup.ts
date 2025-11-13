@@ -2,6 +2,10 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb'
 import { GenericContainer, Wait } from 'testcontainers'
 import { DB } from '../src/index.ts'
+import { createConfig } from '../src/config.ts'
+import * as fs from 'fs/promises'
+import * as os from 'os'
+import * as path from 'path'
 
 let globalTestDB: TestDBSetup | null = null
 let globalClient: DynamoDBClient | null = null
@@ -122,12 +126,16 @@ export async function startTestDB(): Promise<TestDBSetup> {
   } else {
     // Start dynado server
     console.log('Starting dynado server for testing...')
-    const db = new DB()
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dynado-test-'))
+
+    const db = new DB(createConfig({ port: 0, dataDir: tmpDir }))
+    const port = db.server.port
 
     return {
-      endpoint: 'http://localhost:8000',
+      endpoint: `http://localhost:${port}`,
       cleanup: async () => {
         await db.deleteAllData()
+        await db.server.stop()
       },
     }
   }

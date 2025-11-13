@@ -25,6 +25,7 @@ import type { Shard } from './shard.ts'
 import type { MetadataStore } from './metadata-store.ts'
 import { getShardIndex } from './hash-utils.ts'
 import * as fs from 'fs'
+import { MAX_ITEMS_PER_TRANSACTION } from './index.ts'
 
 interface IdempotencyCacheEntry {
   timestamp: number
@@ -226,8 +227,10 @@ export class TransactionCoordinator {
     if (!items || items.length === 0) {
       throw new Error('TransactItems cannot be empty')
     }
-    if (items.length > 100) {
-      throw new Error('Transaction cannot contain more than 100 items')
+    if (items.length > MAX_ITEMS_PER_TRANSACTION) {
+      throw new Error(
+        `Transaction cannot contain more than ${MAX_ITEMS_PER_TRANSACTION} items`
+      )
     }
 
     // For read transactions, we just read from each shard
@@ -304,9 +307,7 @@ export class TransactionCoordinator {
       let updateExpression: string | undefined
       let conditionExpression: string | undefined
       let expressionAttributeNames: Record<string, string> | undefined
-      let expressionAttributeValues:
-        | Record<string, AttributeValue>
-        | undefined
+      let expressionAttributeValues: Record<string, AttributeValue> | undefined
       let returnValuesOnConditionCheckFailure: 'ALL_OLD' | 'NONE' | undefined
 
       if (item.Put) {
@@ -495,54 +496,66 @@ export class TransactionCoordinator {
     shards: Shard[],
     transactionId: string
   ): Promise<void> {
-    // Group release requests by shard
+    // Group release requests by shard and table
     const releaseByShardMap = new Map<
       number,
-      {
-        tableName: string
-        keys: DynamoDBItem[]
-        keyValues: Array<{
-          partitionKeyValue: string
-          sortKeyValue: string
-        }>
-      }
+      Map<
+        string,
+        {
+          keys: DynamoDBItem[]
+          keyValues: Array<{
+            partitionKeyValue: string
+            sortKeyValue: string
+          }>
+        }
+      >
     >()
 
     for (const op of operations) {
-      if (!releaseByShardMap.has(op.shardIndex)) {
-        releaseByShardMap.set(op.shardIndex, {
-          tableName: op.prepareRequest.tableName,
+      let tableMap = releaseByShardMap.get(op.shardIndex)
+      if (!tableMap) {
+        tableMap = new Map()
+        releaseByShardMap.set(op.shardIndex, tableMap)
+      }
+
+      if (!tableMap.has(op.prepareRequest.tableName)) {
+        tableMap.set(op.prepareRequest.tableName, {
           keys: [],
           keyValues: [],
         })
       }
-      releaseByShardMap.get(op.shardIndex)!.keys.push(op.releaseKey)
-      releaseByShardMap.get(op.shardIndex)!.keyValues.push({
+
+      const entry = tableMap.get(op.prepareRequest.tableName)!
+      entry.keys.push(op.releaseKey)
+      entry.keyValues.push({
         partitionKeyValue: op.prepareRequest.partitionKeyValue,
         sortKeyValue: op.prepareRequest.sortKeyValue,
       })
     }
 
-    // Send release requests in parallel
-    const releasePromises = Array.from(releaseByShardMap.entries()).map(
-      async ([shardIndex, data]) => {
-        const shard = shards[shardIndex]
-        if (!shard) return
+    // Send release requests in parallel per shard/table pair
+    const releasePromises = Array.from(releaseByShardMap.entries()).flatMap(
+      ([shardIndex, tableMap]) =>
+        Array.from(tableMap.entries()).map(async ([tableName, data]) => {
+          const shard = shards[shardIndex]
+          if (!shard) {
+            return
+          }
 
-        const releaseRequest: ReleaseRequest = {
-          transactionId,
-          tableName: data.tableName,
-          keys: data.keys,
-          keyValues: data.keyValues,
-        }
+          const releaseRequest: ReleaseRequest = {
+            transactionId,
+            tableName,
+            keys: data.keys,
+            keyValues: data.keyValues,
+          }
 
-        try {
-          await shard.release(releaseRequest)
-        } catch (error) {
-          // Ignore release errors (best effort)
-          console.error(`Failed to release on shard ${shardIndex}:`, error)
-        }
-      }
+          try {
+            await shard.release(releaseRequest)
+          } catch (error) {
+            // Ignore release errors (best effort)
+            console.error(`Failed to release on shard ${shardIndex}:`, error)
+          }
+        })
     )
 
     await Promise.all(releasePromises)

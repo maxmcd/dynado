@@ -1,6 +1,6 @@
 // DynamoDB-compatible server with sharded SQLite storage
 
-import { getConfigFromEnv } from './config.ts'
+import { getConfigFromEnv, type Config } from './config.ts'
 import { ShardedSQLiteStorage } from './storage-sqlite.ts'
 import type {
   StorageBackend,
@@ -32,15 +32,20 @@ import { TransactionCancelledError } from './storage.ts'
 import * as fs from 'fs/promises'
 import CRC32 from 'crc-32'
 import { evaluateKeyCondition } from './expression-parser/key-condition-evaluator.ts'
-import { applyUpdateExpressionToItem } from './expression-parser/index.ts'
+import {
+  applyUpdateExpressionToItem,
+  evaluateConditionExpression,
+} from './expression-parser/index.ts'
+
+export const MAX_ITEMS_PER_TRANSACTION = 100
 
 export class DB {
   storage: StorageBackend
   server: Bun.Server<undefined>
-  config: ReturnType<typeof getConfigFromEnv>
+  config: Config
 
-  constructor() {
-    this.config = getConfigFromEnv()
+  constructor(config?: Config) {
+    this.config = config ?? getConfigFromEnv()
     this.storage = new ShardedSQLiteStorage({
       shardCount: this.config.shardCount,
       dataDir: this.config.dataDir,
@@ -83,7 +88,9 @@ export class DB {
           response = await this.handleListTables(body as ListTablesCommandInput)
           break
         case 'CreateTable':
-          response = await this.handleCreateTable(body as CreateTableCommandInput)
+          response = await this.handleCreateTable(
+            body as CreateTableCommandInput
+          )
           break
         case 'DescribeTable':
           response = await this.handleDescribeTable(
@@ -157,10 +164,8 @@ export class DB {
         },
       })
     } catch (error: unknown) {
-      const catchBody = JSON.stringify({
-        __type: error instanceof Error ? error.name : 'InternalFailure',
-        message: error instanceof Error ? error.message : 'Unknown error',
-      })
+      const errorPayload = serializeError(error)
+      const catchBody = JSON.stringify(errorPayload)
       const catchChecksum = CRC32.str(catchBody) >>> 0 // Convert to unsigned 32-bit
       return new Response(catchBody, {
         status: 400,
@@ -205,7 +210,14 @@ export class DB {
   }
 
   async handlePutItem(body: PutItemCommandInput) {
-    const { TableName, Item } = body
+    const {
+      TableName,
+      Item,
+      ConditionExpression,
+      ExpressionAttributeNames,
+      ExpressionAttributeValues,
+      ReturnValues,
+    } = body
 
     if (!TableName || !Item) {
       throw {
@@ -214,7 +226,18 @@ export class DB {
       }
     }
 
+    const existingItem = await this.storage.getItem(TableName, Item)
+    assertConditionExpression(
+      existingItem,
+      ConditionExpression,
+      ExpressionAttributeNames ?? undefined,
+      ExpressionAttributeValues ?? undefined
+    )
     await this.storage.putItem(TableName, Item)
+
+    if (ReturnValues === 'ALL_OLD') {
+      return { Attributes: existingItem || {} }
+    }
 
     return {}
   }
@@ -223,7 +246,10 @@ export class DB {
     const { TableName, Key } = body
 
     if (!TableName || !Key) {
-      throw { name: 'ValidationException', message: 'TableName and Key are required' }
+      throw {
+        name: 'ValidationException',
+        message: 'TableName and Key are required',
+      }
     }
 
     const item = await this.storage.getItem(TableName, Key)
@@ -267,6 +293,7 @@ export class DB {
       UpdateExpression,
       ExpressionAttributeValues,
       ExpressionAttributeNames,
+      ConditionExpression,
       ReturnValues,
     } = body
 
@@ -283,6 +310,12 @@ export class DB {
     }
 
     const oldItem = await this.storage.getItem(TableName, Key)
+    assertConditionExpression(
+      oldItem,
+      ConditionExpression,
+      ExpressionAttributeNames ?? undefined,
+      ExpressionAttributeValues ?? undefined
+    )
     let item: DynamoDBItem = oldItem ? { ...oldItem } : { ...Key }
 
     if (UpdateExpression) {
@@ -303,13 +336,23 @@ export class DB {
       case 'ALL_NEW':
       case 'UPDATED_NEW':
         return { Attributes: item }
+      case 'NONE':
+      case undefined:
+        return {}
       default:
-        return { Attributes: item }
+        return {}
     }
   }
 
   async handleDeleteItem(body: DeleteItemCommandInput) {
-    const { TableName, Key, ReturnValues } = body
+    const {
+      TableName,
+      Key,
+      ReturnValues,
+      ConditionExpression,
+      ExpressionAttributeNames,
+      ExpressionAttributeValues,
+    } = body
 
     if (!TableName || !Key) {
       throw {
@@ -318,11 +361,17 @@ export class DB {
       }
     }
 
-    const item = await this.storage.deleteItem(TableName, Key)
+    const existingItem = await this.storage.getItem(TableName, Key)
+    assertConditionExpression(
+      existingItem,
+      ConditionExpression,
+      ExpressionAttributeNames ?? undefined,
+      ExpressionAttributeValues ?? undefined
+    )
+    await this.storage.deleteItem(TableName, Key)
 
-    if (item) {
-      // Return attributes by default (ALL_OLD behavior)
-      return { Attributes: item }
+    if (ReturnValues === 'ALL_OLD') {
+      return { Attributes: existingItem || {} }
     }
 
     return {}
@@ -429,12 +478,7 @@ export class DB {
       }
     }
 
-    const queryResult = await this.storage.query(
-      TableName,
-      keyCondition,
-      undefined,
-      ExclusiveStartKey
-    )
+    const queryResult = await this.storage.query(TableName, keyCondition)
     let items = queryResult.items
 
     // Sort items by sort key based on ScanIndexForward
@@ -442,25 +486,36 @@ export class DB {
       const sortKeyElement = table.keySchema[1]
       const sortKeyName = sortKeyElement?.AttributeName
       if (sortKeyName) {
-      items.sort((a, b) => {
-        const aVal = a[sortKeyName]
-        const bVal = b[sortKeyName]
+        items.sort((a, b) => {
+          const aVal = a[sortKeyName]
+          const bVal = b[sortKeyName]
 
-        // Handle string sort keys
-        if (aVal?.S !== undefined && bVal?.S !== undefined) {
-          const comparison = aVal.S.localeCompare(bVal.S)
-          return ScanIndexForward ? comparison : -comparison
-        }
+          // Handle string sort keys
+          if (aVal?.S !== undefined && bVal?.S !== undefined) {
+            const comparison = aVal.S.localeCompare(bVal.S)
+            return ScanIndexForward ? comparison : -comparison
+          }
 
-        // Handle number sort keys
-        if (aVal?.N !== undefined && bVal?.N !== undefined) {
-          const comparison = parseFloat(aVal.N) - parseFloat(bVal.N)
-          return ScanIndexForward ? comparison : -comparison
-        }
+          // Handle number sort keys
+          if (aVal?.N !== undefined && bVal?.N !== undefined) {
+            const comparison = parseFloat(aVal.N) - parseFloat(bVal.N)
+            return ScanIndexForward ? comparison : -comparison
+          }
 
-        return 0
-      })
+          return 0
+        })
+      }
     }
+
+    if (ExclusiveStartKey) {
+      const exclusiveKeyString = getKeyString(ExclusiveStartKey)
+      const startIndex = items.findIndex((item) => {
+        const key = extractKey(table, item)
+        return getKeyString(key) === exclusiveKeyString
+      })
+      if (startIndex >= 0) {
+        items = items.slice(startIndex + 1)
+      }
     }
 
     const scannedCount = items.length
@@ -564,17 +619,23 @@ export class DB {
       }
     }
 
-    if (TransactItems.length > 25) {
+    if (TransactItems.length > 100) {
       throw {
         name: 'ValidationException',
-        message: 'Transaction cannot contain more than 25 items',
+        message: 'Transaction cannot contain more than 100 items',
       }
     }
 
     const items: TransactWriteItem[] = TransactItems.map((item) => {
       if (item.Put) {
-        const { TableName, Item, ConditionExpression, ExpressionAttributeNames, ExpressionAttributeValues, ReturnValuesOnConditionCheckFailure } =
-          item.Put
+        const {
+          TableName,
+          Item,
+          ConditionExpression,
+          ExpressionAttributeNames,
+          ExpressionAttributeValues,
+          ReturnValuesOnConditionCheckFailure,
+        } = item.Put
         if (!TableName || !Item) {
           throw {
             name: 'ValidationException',
@@ -606,7 +667,8 @@ export class DB {
         if (!TableName || !Key || !UpdateExpression) {
           throw {
             name: 'ValidationException',
-            message: 'Update requests require TableName, Key, and UpdateExpression',
+            message:
+              'Update requests require TableName, Key, and UpdateExpression',
           }
         }
         return {
@@ -708,10 +770,10 @@ export class DB {
       }
     }
 
-    if (TransactItems.length > 25) {
+    if (TransactItems.length > MAX_ITEMS_PER_TRANSACTION) {
       throw {
         name: 'ValidationException',
-        message: 'Transaction cannot contain more than 25 items',
+        message: `Transaction cannot contain more than ${MAX_ITEMS_PER_TRANSACTION} items`,
       }
     }
 
@@ -719,12 +781,8 @@ export class DB {
       if (!item.Get) {
         throw { name: 'ValidationException', message: 'Get is required' }
       }
-      const {
-        TableName,
-        Key,
-        ProjectionExpression,
-        ExpressionAttributeNames,
-      } = item.Get
+      const { TableName, Key, ProjectionExpression, ExpressionAttributeNames } =
+        item.Get
       if (!TableName || !Key) {
         throw {
           name: 'ValidationException',
@@ -761,7 +819,7 @@ function applyFilterExpression(
     if (eqMatch && eqMatch[1] && eqMatch[2]) {
       const resolvedName =
         eqMatch[1].startsWith('#') && expressionAttributeNames
-          ? expressionAttributeNames[eqMatch[1]] ?? eqMatch[1]
+          ? (expressionAttributeNames[eqMatch[1]] ?? eqMatch[1])
           : eqMatch[1]
       const valueRef = eqMatch[2]
 
@@ -777,7 +835,7 @@ function applyFilterExpression(
     if (gtMatch && gtMatch[1] && gtMatch[2]) {
       const resolvedName =
         gtMatch[1].startsWith('#') && expressionAttributeNames
-          ? expressionAttributeNames[gtMatch[1]] ?? gtMatch[1]
+          ? (expressionAttributeNames[gtMatch[1]] ?? gtMatch[1])
           : gtMatch[1]
       const valueRef = gtMatch[2]
 
@@ -807,4 +865,62 @@ function extractKey(table: TableSchema, item: DynamoDBItem): DynamoDBItem {
     key[attrName] = value
   }
   return key
+}
+
+function getKeyString(key: DynamoDBItem): string {
+  const keyAttrs = Object.keys(key).sort()
+  return keyAttrs.map((attr) => JSON.stringify(key[attr])).join('#')
+}
+
+function assertConditionExpression(
+  currentItem: DynamoDBItem | null,
+  conditionExpression?: string,
+  expressionAttributeNames?: Record<string, string>,
+  expressionAttributeValues?: Record<string, AttributeValue>
+): void {
+  const passed = evaluateConditionExpression(
+    currentItem,
+    conditionExpression,
+    expressionAttributeNames,
+    expressionAttributeValues
+  )
+  if (!passed) {
+    throw {
+      name: 'ConditionalCheckFailedException',
+      message: 'The conditional request failed',
+    }
+  }
+}
+
+function serializeError(error: unknown): Record<string, any> {
+  if (error instanceof Error) {
+    const payload: Record<string, any> = {
+      __type: error.name || 'InternalFailure',
+      message: error.message || 'Unknown error',
+    }
+    for (const key of Object.keys(error)) {
+      if (key === 'name' || key === 'message') continue
+      payload[key] = (error as any)[key]
+    }
+    return payload
+  }
+
+  if (typeof error === 'object' && error !== null) {
+    const record = error as Record<string, any>
+    const payload: Record<string, any> = {
+      __type: typeof record.name === 'string' ? record.name : 'InternalFailure',
+      message:
+        typeof record.message === 'string' ? record.message : 'Unknown error',
+    }
+    for (const [key, value] of Object.entries(record)) {
+      if (key === 'name' || key === 'message') continue
+      payload[key] = value
+    }
+    return payload
+  }
+
+  return {
+    __type: 'InternalFailure',
+    message: 'Unknown error',
+  }
 }

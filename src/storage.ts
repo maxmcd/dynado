@@ -28,10 +28,7 @@ export interface StorageBackend {
   // Item operations
   putItem(tableName: string, item: DynamoDBItem): Promise<void>
   getItem(tableName: string, key: DynamoDBItem): Promise<DynamoDBItem | null>
-  deleteItem(
-    tableName: string,
-    key: DynamoDBItem
-  ): Promise<DynamoDBItem | null>
+  deleteItem(tableName: string, key: DynamoDBItem): Promise<DynamoDBItem | null>
 
   // Scan/Query operations
   scan(
@@ -66,7 +63,5 @@ export interface StorageBackend {
     items: TransactWriteItem[],
     clientRequestToken?: string
   ): Promise<void>
-  transactGet(
-    items: TransactGetItem[]
-  ): Promise<Array<DynamoDBItem | null>>
+  transactGet(items: TransactGetItem[]): Promise<Array<DynamoDBItem | null>>
 }

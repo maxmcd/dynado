@@ -9,7 +9,10 @@ import type {
   QueryResponse,
   TableSchema,
 } from './types.ts'
-import type { AttributeDefinition, KeySchemaElement } from '@aws-sdk/client-dynamodb'
+import type {
+  AttributeDefinition,
+  KeySchemaElement,
+} from '@aws-sdk/client-dynamodb'
 import type { Shard } from './shard.ts'
 import type { MetadataStore } from './metadata-store.ts'
 import type { TransactionCoordinator } from './coordinator.ts'

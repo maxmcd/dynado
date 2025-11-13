@@ -233,9 +233,10 @@ export class Shard {
 
     // Get current LSN to increment
     const result = this.db
-      .query<LsnRow, [string, string, string]>(
-        `SELECT lsn FROM items WHERE table_name = ? AND partition_key = ? AND sort_key = ?`
-      )
+      .query<
+        LsnRow,
+        [string, string, string]
+      >(`SELECT lsn FROM items WHERE table_name = ? AND partition_key = ? AND sort_key = ?`)
       .get(req.tableName, partitionKey, sortKey)
 
     const newLsn = result ? result.lsn + 1 : 1
@@ -267,9 +268,10 @@ export class Shard {
 
       // Check if item was a placeholder (created during prepare)
       const result = this.db
-        .query<LsnRow, [string, string, string]>(
-          `SELECT lsn FROM items WHERE table_name = ? AND partition_key = ? AND sort_key = ?`
-        )
+        .query<
+          LsnRow,
+          [string, string, string]
+        >(`SELECT lsn FROM items WHERE table_name = ? AND partition_key = ? AND sort_key = ?`)
         .get(req.tableName, partitionKey, sortKey)
 
       if (result && result.lsn === 0) {
@@ -308,9 +310,10 @@ export class Shard {
 
     // Get current LSN for this item (if it exists)
     const currentLsnResult = this.db
-      .query<LsnRow, [string, string, string]>(
-        `SELECT lsn FROM items WHERE table_name = ? AND partition_key = ? AND sort_key = ?`
-      )
+      .query<
+        LsnRow,
+        [string, string, string]
+      >(`SELECT lsn FROM items WHERE table_name = ? AND partition_key = ? AND sort_key = ?`)
       .get(tableName, partitionKey, sortKey)
     const newLsn = currentLsnResult ? currentLsnResult.lsn + 1 : 1
 
@@ -328,9 +331,10 @@ export class Shard {
     sortKey: string
   ): Promise<DynamoDBItem | null> {
     const result = this.db
-      .query<ItemRow, [string, string, string]>(
-        `SELECT item_data FROM items WHERE table_name = ? AND partition_key = ? AND sort_key = ?`
-      )
+      .query<
+        ItemRow,
+        [string, string, string]
+      >(`SELECT item_data FROM items WHERE table_name = ? AND partition_key = ? AND sort_key = ? AND lsn > 0`)
       .get(tableName, partitionKey, sortKey)
 
     return result ? JSON.parse(result.item_data) : null
@@ -354,7 +358,10 @@ export class Shard {
 
   async scanTable(tableName: string): Promise<DynamoDBItem[]> {
     const results = this.db
-      .query<ItemRow, [string]>('SELECT item_data FROM items WHERE table_name = ?')
+      .query<
+        ItemRow,
+        [string]
+      >('SELECT item_data FROM items WHERE table_name = ? AND lsn > 0')
       .all(tableName)
 
     return results.map((r) => JSON.parse(r.item_data))
@@ -362,9 +369,10 @@ export class Shard {
 
   async getItemCount(tableName: string): Promise<number> {
     const result = this.db
-      .query<CountRow, [string]>(
-        'SELECT COUNT(*) as count FROM items WHERE table_name = ?'
-      )
+      .query<
+        CountRow,
+        [string]
+      >('SELECT COUNT(*) as count FROM items WHERE table_name = ? AND lsn > 0')
       .get(tableName)
 
     return result?.count ?? 0
@@ -388,7 +396,7 @@ export class Shard {
     scannedCount: number
   }> {
     // Build SQL query based on sort key condition
-    let sql = `SELECT item_data, sort_key FROM items WHERE table_name = ? AND partition_key = ?`
+    let sql = `SELECT item_data, sort_key FROM items WHERE table_name = ? AND partition_key = ? AND lsn > 0`
     const params: Array<string | number> = [tableName, partitionKeyValue]
 
     // Add sort key condition if provided
@@ -451,7 +459,7 @@ export class Shard {
 
     // Handle pagination with exclusiveStartKey
     if (exclusiveStartKey) {
-      sql += ` AND sort_key > ?`
+      sql += scanIndexForward ? ` AND sort_key > ?` : ` AND sort_key < ?`
       params.push(exclusiveStartKey.sortKeyValue)
     }
 

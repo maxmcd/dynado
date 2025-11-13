@@ -11,6 +11,7 @@ import {
   TransactionCanceledException,
 } from '@aws-sdk/client-dynamodb'
 import { getGlobalTestDB } from './test-global-setup.ts'
+import { MAX_ITEMS_PER_TRANSACTION } from '../src/index.ts'
 
 describe('2PC Failure Scenarios', () => {
   let client: DynamoDBClient
@@ -516,7 +517,7 @@ describe('2PC Failure Scenarios', () => {
       )
       expect.unreachable('Should have failed with too many items')
     } catch (error: any) {
-      expect(error.message).toContain('100')
+      expect(error.message).toContain(`${MAX_ITEMS_PER_TRANSACTION}`)
     }
   })
 
