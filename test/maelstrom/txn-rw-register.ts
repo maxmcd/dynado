@@ -1,10 +1,20 @@
 import readline from 'node:readline'
 import { stdin, stdout, stderr } from 'node:process'
 import path from 'node:path'
+import fs from 'node:fs/promises'
 
-import type { AttributeValue } from '@aws-sdk/client-dynamodb'
-import { ShardedSQLiteStorage } from '../storage-sqlite.ts'
-import type { DynamoDBItem } from '../storage.ts'
+import {
+  DynamoDBClient,
+  CreateTableCommand,
+  DescribeTableCommand,
+  GetItemCommand,
+  PutItemCommand,
+  TransactWriteItemsCommand,
+  type AttributeValue,
+  type TransactWriteItem,
+} from '@aws-sdk/client-dynamodb'
+import { DB } from '../../src/index.ts'
+import { createConfig } from '../../src/config.ts'
 
 type TxnOp = ['r' | 'w', unknown, unknown | null]
 
@@ -35,24 +45,40 @@ const dataRoot =
 const nodeDataDir = path.join(dataRoot, `node-${process.pid}`)
 const shardCount = parseInt(process.env.MAELSTROM_SHARD_COUNT ?? '1', 10)
 
-const storage = new ShardedSQLiteStorage({
-  shardCount,
-  dataDir: nodeDataDir,
+const db = new DB(
+  createConfig({
+    shardCount,
+    dataDir: nodeDataDir,
+    port: 0,
+  })
+)
+const endpoint = `http://127.0.0.1:${db.server.port}`
+const client = new DynamoDBClient({
+  endpoint,
+  region: 'local',
+  credentials: { accessKeyId: 'test', secretAccessKey: 'test' },
 })
 
 let tableReady: Promise<void> | null = null
 async function ensureTableExists() {
   if (!tableReady) {
     tableReady = (async () => {
-      const existing = await storage.describeTable(TABLE_NAME)
-      if (!existing) {
-        await storage.createTable({
-          tableName: TABLE_NAME,
-          keySchema: [{ AttributeName: KEY_ATTR, KeyType: 'HASH' }],
-          attributeDefinitions: [
-            { AttributeName: KEY_ATTR, AttributeType: 'S' },
-          ],
-        })
+      try {
+        await client.send(new DescribeTableCommand({ TableName: TABLE_NAME }))
+      } catch (error) {
+        if ((error as { name?: string }).name !== 'ResourceNotFoundException') {
+          throw error
+        }
+        await client.send(
+          new CreateTableCommand({
+            TableName: TABLE_NAME,
+            KeySchema: [{ AttributeName: KEY_ATTR, KeyType: 'HASH' }],
+            AttributeDefinitions: [
+              { AttributeName: KEY_ATTR, AttributeType: 'S' },
+            ],
+            BillingMode: 'PAY_PER_REQUEST',
+          })
+        )
       }
     })()
   }
@@ -92,7 +118,8 @@ rl.on('close', () => {
       )
     })
     .finally(() => {
-      storage.close()
+      db.server.stop().catch(() => {})
+      fs.rm(nodeDataDir, { recursive: true, force: true }).catch(() => {})
       process.exit(0)
     })
 })
@@ -163,12 +190,17 @@ async function handleTxn(message: MaelstromMessage) {
       } else if (readCache.has(keyStr)) {
         observed = readCache.get(keyStr) ?? null
       } else {
-        const item = await storage.getItem(
-          TABLE_NAME,
-          buildKeyItemFromString(keyStr)
+        const response = await client.send(
+          new GetItemCommand({
+            TableName: TABLE_NAME,
+            Key: buildKeyItemFromString(keyStr),
+            ConsistentRead: true,
+          })
         )
         observed =
-          item && item[VALUE_ATTR] ? decodeValue(item[VALUE_ATTR]) : null
+          response.Item && response.Item[VALUE_ATTR]
+            ? decodeValue(response.Item[VALUE_ATTR]!)
+            : null
         readCache.set(keyStr, observed)
       }
       responseOps.push(['r', key, observed])
@@ -188,11 +220,24 @@ async function handleTxn(message: MaelstromMessage) {
     }
   }
 
-  for (const [keyStr, write] of stagedWrites.entries()) {
-    await storage.putItem(
-      TABLE_NAME,
-      buildFullItemFromString(keyStr, write.attr)
-    )
+  if (stagedWrites.size > 0) {
+    const transactItems: TransactWriteItem[] = Array.from(
+      stagedWrites.entries()
+    ).map(([keyStr, write]) => ({
+      Put: {
+        TableName: TABLE_NAME,
+        Item: buildFullItemFromString(keyStr, write.attr),
+      },
+    }))
+
+    for (let i = 0; i < transactItems.length; i += 25) {
+      const chunk = transactItems.slice(i, i + 25)
+      await client.send(
+        new TransactWriteItemsCommand({
+          TransactItems: chunk,
+        })
+      )
+    }
   }
 
   reply(message, {
@@ -201,7 +246,7 @@ async function handleTxn(message: MaelstromMessage) {
   })
 }
 
-function buildKeyItemFromString(key: string): DynamoDBItem {
+function buildKeyItemFromString(key: string): Record<string, AttributeValue> {
   return {
     [KEY_ATTR]: { S: key },
   }
@@ -210,7 +255,7 @@ function buildKeyItemFromString(key: string): DynamoDBItem {
 function buildFullItemFromString(
   key: string,
   valueAttr: AttributeValue
-): DynamoDBItem {
+): Record<string, AttributeValue> {
   return {
     [KEY_ATTR]: { S: key },
     [VALUE_ATTR]: valueAttr,

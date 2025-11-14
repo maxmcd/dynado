@@ -1,55 +1,70 @@
 // DynamoDB-compatible server with sharded SQLite storage
 
 import { getConfigFromEnv, type Config } from './config.ts'
-import { ShardedSQLiteStorage } from './storage-sqlite.ts'
-import type {
-  StorageBackend,
-  DynamoDBItem,
-  TableSchema,
-  TransactWriteItem,
-  TransactGetItem,
-} from './storage.ts'
-import type {
-  AttributeValue,
-  BatchGetItemCommandInput,
-  BatchWriteItemCommandInput,
-  CreateTableCommandInput,
-  DeleteItemCommandInput,
-  DeleteTableCommandInput,
-  DescribeTableCommandInput,
-  GetItemCommandInput,
-  KeysAndAttributes,
-  ListTablesCommandInput,
-  PutItemCommandInput,
-  QueryCommandInput,
-  ScanCommandInput,
-  TransactGetItemsCommandInput,
-  TransactWriteItemsCommandInput,
-  UpdateItemCommandInput,
-  WriteRequest,
+import {
+  TransactionCanceledException,
+  type AttributeValue,
+  type BatchGetItemCommandInput,
+  type BatchWriteItemCommandInput,
+  type CreateTableCommandInput,
+  type DeleteItemCommandInput,
+  type DeleteTableCommandInput,
+  type DescribeTableCommandInput,
+  type GetItemCommandInput,
+  type ListTablesCommandInput,
+  type PutItemCommandInput,
+  type QueryCommandInput,
+  type ScanCommandInput,
+  type TransactGetItem,
+  type TransactGetItemsCommandInput,
+  type TransactWriteItemsCommandInput,
+  type UpdateItemCommandInput,
+  type WriteRequest,
 } from '@aws-sdk/client-dynamodb'
-import { TransactionCancelledError } from './storage.ts'
 import * as fs from 'fs/promises'
+import * as nodeFs from 'fs'
 import CRC32 from 'crc-32'
 import { evaluateKeyCondition } from './expression-parser/key-condition-evaluator.ts'
 import {
   applyUpdateExpressionToItem,
   evaluateConditionExpression,
 } from './expression-parser/index.ts'
+import { Router } from './router.ts'
+import { Shard } from './shard.ts'
+import { MetadataStore } from './metadata-store.ts'
+import { TransactionCoordinator } from './coordinator.ts'
+import { type DynamoDBItem, type TableSchema } from './types.ts'
 
 export const MAX_ITEMS_PER_TRANSACTION = 100
 
 export class DB {
-  storage: StorageBackend
   server: Bun.Server<undefined>
+  router: Router
+  metadataStore: MetadataStore
   config: Config
 
   constructor(config?: Config) {
     this.config = config ?? getConfigFromEnv()
-    this.storage = new ShardedSQLiteStorage({
-      shardCount: this.config.shardCount,
-      dataDir: this.config.dataDir,
-    })
+    // Create data directory if it doesn't exist
+    if (!nodeFs.existsSync(this.config.dataDir)) {
+      nodeFs.mkdirSync(this.config.dataDir, { recursive: true })
+    }
+
+    const shards: Shard[] = []
+
+    // 1. Create shards
+    for (let i = 0; i < this.config.shardCount; i++) {
+      const shard = new Shard(`${this.config.dataDir}/shard_${i}.db`, i)
+      shards.push(shard)
+    }
+
+    // 2. Create metadata store
+    this.metadataStore = new MetadataStore(this.config.dataDir)
+    // 3. Create transaction coordinator
+    const coordinator = new TransactionCoordinator(this.config.dataDir)
+
+    // 4. Create router that ties everything together
+    this.router = new Router(shards, this.metadataStore, coordinator)
     this.server = Bun.serve({
       port: this.config.port,
       fetch: (req) => this.handleDynamoDBRequest(req),
@@ -178,7 +193,7 @@ export class DB {
   }
 
   async handleListTables(_body: ListTablesCommandInput) {
-    const tableNames = await this.storage.listTables()
+    const tableNames = await this.metadataStore.listTables()
     return { TableNames: tableNames }
   }
 
@@ -192,7 +207,7 @@ export class DB {
       }
     }
 
-    await this.storage.createTable({
+    await this.metadataStore.createTable({
       tableName: TableName,
       keySchema: KeySchema,
       attributeDefinitions: AttributeDefinitions,
@@ -226,14 +241,14 @@ export class DB {
       }
     }
 
-    const existingItem = await this.storage.getItem(TableName, Item)
+    const existingItem = await this.router.getItem(TableName, Item)
     assertConditionExpression(
       existingItem,
       ConditionExpression,
-      ExpressionAttributeNames ?? undefined,
-      ExpressionAttributeValues ?? undefined
+      ExpressionAttributeNames,
+      ExpressionAttributeValues
     )
-    await this.storage.putItem(TableName, Item)
+    await this.router.putItem(TableName, Item)
 
     if (ReturnValues === 'ALL_OLD') {
       return { Attributes: existingItem || {} }
@@ -252,7 +267,7 @@ export class DB {
       }
     }
 
-    const item = await this.storage.getItem(TableName, Key)
+    const item = await this.router.getItem(TableName, Key)
 
     if (item) {
       return { Item: item }
@@ -267,12 +282,12 @@ export class DB {
       throw { name: 'ValidationException', message: 'TableName is required' }
     }
 
-    const table = await this.storage.describeTable(TableName)
+    const table = await this.metadataStore.describeTable(TableName)
     if (!table) {
       throw { name: 'ResourceNotFoundException', message: 'Table not found' }
     }
 
-    const itemCount = await this.storage.getTableItemCount(TableName)
+    const itemCount = await this.router.getTableItemCount(TableName)
 
     return {
       Table: {
@@ -304,12 +319,13 @@ export class DB {
       }
     }
 
-    const table = await this.storage.describeTable(TableName)
+    // TODO: cache this?
+    const table = await this.metadataStore.describeTable(TableName)
     if (!table) {
       throw { name: 'ResourceNotFoundException', message: 'Table not found' }
     }
 
-    const oldItem = await this.storage.getItem(TableName, Key)
+    const oldItem = await this.router.getItem(TableName, Key)
     assertConditionExpression(
       oldItem,
       ConditionExpression,
@@ -327,7 +343,7 @@ export class DB {
       )
     }
 
-    await this.storage.putItem(TableName, item)
+    await this.router.putItem(TableName, item)
 
     switch (ReturnValues) {
       case 'ALL_OLD':
@@ -361,14 +377,14 @@ export class DB {
       }
     }
 
-    const existingItem = await this.storage.getItem(TableName, Key)
+    const existingItem = await this.router.getItem(TableName, Key)
     assertConditionExpression(
       existingItem,
       ConditionExpression,
       ExpressionAttributeNames ?? undefined,
       ExpressionAttributeValues ?? undefined
     )
-    await this.storage.deleteItem(TableName, Key)
+    await this.router.deleteItem(TableName, Key)
 
     if (ReturnValues === 'ALL_OLD') {
       return { Attributes: existingItem || {} }
@@ -391,13 +407,13 @@ export class DB {
       throw { name: 'ValidationException', message: 'TableName is required' }
     }
 
-    const table = await this.storage.describeTable(TableName)
-    if (!table) {
+    const schema = await this.metadataStore.describeTable(TableName)
+    if (!schema) {
       throw { name: 'ResourceNotFoundException', message: 'Table not found' }
     }
 
-    const scanResult = await this.storage.scan(
-      TableName,
+    const scanResult = await this.router.scan(
+      schema,
       undefined,
       ExclusiveStartKey
     )
@@ -420,7 +436,7 @@ export class DB {
       const limitedItems = items.slice(0, Limit)
       const lastItem = limitedItems[limitedItems.length - 1]
       if (lastItem) {
-        lastEvaluatedKey = extractKey(table, lastItem)
+        lastEvaluatedKey = extractKey(schema, lastItem)
       }
       items = limitedItems
     }
@@ -459,8 +475,8 @@ export class DB {
       throw { name: 'ValidationException', message: 'TableName is required' }
     }
 
-    const table = await this.storage.describeTable(TableName)
-    if (!table) {
+    const schema = await this.metadataStore.describeTable(TableName)
+    if (!schema) {
       throw { name: 'ResourceNotFoundException', message: 'Table not found' }
     }
 
@@ -478,12 +494,12 @@ export class DB {
       }
     }
 
-    const queryResult = await this.storage.query(TableName, keyCondition)
+    const queryResult = await this.router.query(schema, keyCondition)
     let items = queryResult.items
 
     // Sort items by sort key based on ScanIndexForward
-    if (table.keySchema.length > 1 && items.length > 0) {
-      const sortKeyElement = table.keySchema[1]
+    if (schema.keySchema.length > 1 && items.length > 0) {
+      const sortKeyElement = schema.keySchema[1]
       const sortKeyName = sortKeyElement?.AttributeName
       if (sortKeyName) {
         items.sort((a, b) => {
@@ -510,7 +526,7 @@ export class DB {
     if (ExclusiveStartKey) {
       const exclusiveKeyString = getKeyString(ExclusiveStartKey)
       const startIndex = items.findIndex((item) => {
-        const key = extractKey(table, item)
+        const key = extractKey(schema, item)
         return getKeyString(key) === exclusiveKeyString
       })
       if (startIndex >= 0) {
@@ -536,7 +552,7 @@ export class DB {
       const limitedItems = items.slice(0, Limit)
       const lastItem = limitedItems[limitedItems.length - 1]
       if (lastItem) {
-        lastEvaluatedKey = extractKey(table, lastItem)
+        lastEvaluatedKey = extractKey(schema, lastItem)
       }
       items = limitedItems
     }
@@ -556,7 +572,9 @@ export class DB {
       throw { name: 'ValidationException', message: 'TableName is required' }
     }
 
-    await this.storage.deleteTable(TableName)
+    await this.metadataStore.deleteTable(TableName)
+    // TODO: defer?
+    await this.router.deleteAllTableItems(TableName)
     return { TableDescription: { TableName, TableStatus: 'DELETING' } }
   }
 
@@ -574,7 +592,7 @@ export class DB {
 
     for (const [tableName, request] of Object.entries(RequestItems)) {
       const keys = request.Keys ?? []
-      const items = await this.storage.batchGet(tableName, keys)
+      const items = await this.router.batchGet(tableName, keys)
       responses[tableName] = items
     }
 
@@ -603,7 +621,7 @@ export class DB {
         }
       }
 
-      await this.storage.batchWrite(tableName, puts, deletes)
+      await this.router.batchWrite(tableName, puts, deletes)
     }
 
     return {}
@@ -619,141 +637,22 @@ export class DB {
       }
     }
 
-    if (TransactItems.length > 100) {
+    if (TransactItems.length > MAX_ITEMS_PER_TRANSACTION) {
       throw {
         name: 'ValidationException',
         message: 'Transaction cannot contain more than 100 items',
       }
     }
 
-    const items: TransactWriteItem[] = TransactItems.map((item) => {
-      if (item.Put) {
-        const {
-          TableName,
-          Item,
-          ConditionExpression,
-          ExpressionAttributeNames,
-          ExpressionAttributeValues,
-          ReturnValuesOnConditionCheckFailure,
-        } = item.Put
-        if (!TableName || !Item) {
-          throw {
-            name: 'ValidationException',
-            message: 'Put requests require TableName and Item',
-          }
-        }
-        return {
-          Put: {
-            tableName: TableName,
-            item: Item,
-            conditionExpression: ConditionExpression,
-            expressionAttributeNames: ExpressionAttributeNames,
-            expressionAttributeValues: ExpressionAttributeValues,
-            returnValuesOnConditionCheckFailure:
-              ReturnValuesOnConditionCheckFailure,
-          },
-        }
-      }
-      if (item.Update) {
-        const {
-          TableName,
-          Key,
-          UpdateExpression,
-          ConditionExpression,
-          ExpressionAttributeNames,
-          ExpressionAttributeValues,
-          ReturnValuesOnConditionCheckFailure,
-        } = item.Update
-        if (!TableName || !Key || !UpdateExpression) {
-          throw {
-            name: 'ValidationException',
-            message:
-              'Update requests require TableName, Key, and UpdateExpression',
-          }
-        }
-        return {
-          Update: {
-            tableName: TableName,
-            key: Key,
-            updateExpression: UpdateExpression,
-            conditionExpression: ConditionExpression,
-            expressionAttributeNames: ExpressionAttributeNames,
-            expressionAttributeValues: ExpressionAttributeValues,
-            returnValuesOnConditionCheckFailure:
-              ReturnValuesOnConditionCheckFailure,
-          },
-        }
-      }
-      if (item.Delete) {
-        const {
-          TableName,
-          Key,
-          ConditionExpression,
-          ExpressionAttributeNames,
-          ExpressionAttributeValues,
-          ReturnValuesOnConditionCheckFailure,
-        } = item.Delete
-        if (!TableName || !Key) {
-          throw {
-            name: 'ValidationException',
-            message: 'Delete requests require TableName and Key',
-          }
-        }
-        return {
-          Delete: {
-            tableName: TableName,
-            key: Key,
-            conditionExpression: ConditionExpression,
-            expressionAttributeNames: ExpressionAttributeNames,
-            expressionAttributeValues: ExpressionAttributeValues,
-            returnValuesOnConditionCheckFailure:
-              ReturnValuesOnConditionCheckFailure,
-          },
-        }
-      }
-      if (item.ConditionCheck) {
-        const {
-          TableName,
-          Key,
-          ConditionExpression,
-          ExpressionAttributeNames,
-          ExpressionAttributeValues,
-          ReturnValuesOnConditionCheckFailure,
-        } = item.ConditionCheck
-        if (!TableName || !Key || !ConditionExpression) {
-          throw {
-            name: 'ValidationException',
-            message:
-              'ConditionCheck requests require TableName, Key, and ConditionExpression',
-          }
-        }
-        return {
-          ConditionCheck: {
-            tableName: TableName,
-            key: Key,
-            conditionExpression: ConditionExpression,
-            expressionAttributeNames: ExpressionAttributeNames,
-            expressionAttributeValues: ExpressionAttributeValues,
-            returnValuesOnConditionCheckFailure:
-              ReturnValuesOnConditionCheckFailure,
-          },
-        }
-      }
-      throw {
-        name: 'ValidationException',
-        message: 'Invalid transaction item',
-      }
-    })
-
     try {
-      await this.storage.transactWrite(items, ClientRequestToken)
+      await this.router.transactWrite(TransactItems, ClientRequestToken)
       return {}
     } catch (error: unknown) {
-      if (error instanceof TransactionCancelledError) {
+      if (error instanceof TransactionCanceledException) {
         throw {
           name: 'TransactionCanceledException',
           message: error.message,
-          CancellationReasons: error.cancellationReasons,
+          CancellationReasons: error.CancellationReasons,
         }
       }
       throw error
@@ -777,28 +676,7 @@ export class DB {
       }
     }
 
-    const items: TransactGetItem[] = TransactItems.map((item) => {
-      if (!item.Get) {
-        throw { name: 'ValidationException', message: 'Get is required' }
-      }
-      const { TableName, Key, ProjectionExpression, ExpressionAttributeNames } =
-        item.Get
-      if (!TableName || !Key) {
-        throw {
-          name: 'ValidationException',
-          message: 'Get requests require TableName and Key',
-        }
-      }
-
-      return {
-        tableName: TableName,
-        key: Key,
-        projectionExpression: ProjectionExpression,
-        expressionAttributeNames: ExpressionAttributeNames,
-      }
-    })
-
-    const results = await this.storage.transactGet(items)
+    const results = await this.router.transactGet(TransactItems)
 
     return {
       Responses: results.map((item) => ({ Item: item })),
@@ -851,9 +729,9 @@ function applyFilterExpression(
 }
 
 // Helper to extract key from item
-function extractKey(table: TableSchema, item: DynamoDBItem): DynamoDBItem {
+function extractKey(schema: TableSchema, item: DynamoDBItem): DynamoDBItem {
   const key: DynamoDBItem = {} as DynamoDBItem
-  for (const keySchema of table.keySchema) {
+  for (const keySchema of schema.keySchema) {
     const attrName = keySchema.AttributeName
     if (!attrName) {
       throw new Error('Key schema entry missing AttributeName')

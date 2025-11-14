@@ -9,7 +9,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
         with: { distribution: 'temurin', java-version: '21' }
-      - name: Install Maelstrom CLI
+      - name: Install Maelstrom
         env:
           MAELSTROM_VERSION: v0.2.4
         run: |
@@ -21,6 +21,7 @@ jobs:
         run: |
           set -euo pipefail
           command -v maelstrom
+      - run: sudo apt-get update && sudo apt-get install -y gnuplot
       - name: Set up Go
         uses: actions/setup-go@v5
         with: { go-version: 'stable', cache: true }
@@ -35,7 +36,15 @@ jobs:
       - run: go test -v ./...
       - run: |
           maelstrom test -w txn-rw-register \
-            --bin ./src/maelstrom/run-txn-rw-register \
-            --time-limit 30 \
+            --bin ./test/maelstrom/run-txn-rw-register \
+            --rate 1000 \
+            --time-limit 10 \
             --node-count 1 \
-            --concurrency 20
+            --concurrency 10
+      - run: |
+          maelstrom test -w lin-kv \
+            --bin ./test/maelstrom/run-lin-kv \
+            --rate 1000 \
+            --time-limit 10 \
+            --node-count 1 \
+            --concurrency 10

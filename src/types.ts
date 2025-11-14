@@ -5,6 +5,7 @@ import type {
   AttributeValue,
   CancellationReason,
   KeySchemaElement,
+  TransactWriteItem,
 } from '@aws-sdk/client-dynamodb'
 
 export type DynamoDBItem = Record<string, AttributeValue>
@@ -13,59 +14,6 @@ export interface TableSchema {
   tableName: string
   keySchema: KeySchemaElement[]
   attributeDefinitions: AttributeDefinition[]
-}
-
-export interface TransactWriteItem {
-  Put?: {
-    tableName: string
-    item: DynamoDBItem
-    conditionExpression?: string
-    expressionAttributeNames?: Record<string, string>
-    expressionAttributeValues?: Record<string, AttributeValue>
-    returnValuesOnConditionCheckFailure?: 'ALL_OLD' | 'NONE'
-  }
-  Update?: {
-    tableName: string
-    key: DynamoDBItem
-    updateExpression: string
-    conditionExpression?: string
-    expressionAttributeNames?: Record<string, string>
-    expressionAttributeValues?: Record<string, AttributeValue>
-    returnValuesOnConditionCheckFailure?: 'ALL_OLD' | 'NONE'
-  }
-  Delete?: {
-    tableName: string
-    key: DynamoDBItem
-    conditionExpression?: string
-    expressionAttributeNames?: Record<string, string>
-    expressionAttributeValues?: Record<string, AttributeValue>
-    returnValuesOnConditionCheckFailure?: 'ALL_OLD' | 'NONE'
-  }
-  ConditionCheck?: {
-    tableName: string
-    key: DynamoDBItem
-    conditionExpression: string
-    expressionAttributeNames?: Record<string, string>
-    expressionAttributeValues?: Record<string, AttributeValue>
-    returnValuesOnConditionCheckFailure?: 'ALL_OLD' | 'NONE'
-  }
-}
-
-export interface TransactGetItem {
-  tableName: string
-  key: DynamoDBItem
-  projectionExpression?: string
-  expressionAttributeNames?: Record<string, string>
-}
-
-export class TransactionCancelledError extends Error {
-  override name = 'TransactionCanceledException' as const
-  cancellationReasons: CancellationReason[]
-
-  constructor(message: string, cancellationReasons: CancellationReason[]) {
-    super(message)
-    this.cancellationReasons = cancellationReasons
-  }
 }
 
 // Transaction states following DynamoDB's 2PC protocol

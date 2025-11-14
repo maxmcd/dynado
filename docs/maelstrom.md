@@ -18,7 +18,7 @@ core storage path behaves under Jepsen's workload generator.
 # from the repo root
 maelstrom test \
   -w lin-kv \
-  --bin ./src/maelstrom/run \
+  --bin ./test/maelstrom/run-lin-kv \
   --time-limit 10 \
   --node-count 1 \
   --rate 10 \
@@ -38,7 +38,7 @@ increase `--node-count`). The adapter automatically:
 ```bash
 maelstrom test \
   -w txn-rw-register \
-  --bin ./src/maelstrom/run-txn-rw-register \
+  --bin ./test/maelstrom/run-txn-rw-register \
   --time-limit 10 \
   --node-count 1 \
   --rate 10 \

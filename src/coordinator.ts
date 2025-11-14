@@ -2,25 +2,20 @@
 // In DO architecture, this would be a pool of Durable Objects
 
 import { Database } from 'bun:sqlite'
-import type {
-  AttributeValue,
-  CancellationReason,
+import {
+  TransactionCanceledException,
+  type AttributeValue,
+  type CancellationReason,
+  type TransactGetItem,
+  type TransactWriteItem,
 } from '@aws-sdk/client-dynamodb'
 import type {
-  TransactWriteItem,
-  TransactGetItem,
   DynamoDBItem,
   TransactionRecord,
   PrepareRequest,
   CommitRequest,
   ReleaseRequest,
 } from './types.ts'
-import { TransactionCancelledError } from './types.ts'
-import {
-  generateTransactionId,
-  generateTransactionTimestamp,
-  buildCancellationReasons,
-} from './transaction-protocol.ts'
 import type { Shard } from './shard.ts'
 import type { MetadataStore } from './metadata-store.ts'
 import { getShardIndex } from './hash-utils.ts'
@@ -32,13 +27,48 @@ interface IdempotencyCacheEntry {
   result: void
 }
 
+// Generate unique transaction ID
+export function generateTransactionId(): string {
+  return `tx_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`
+}
+
+// TODO: Monotonic timestamp generator for transaction ordering
+let lastTimestamp = 0
+
+export function generateTransactionTimestamp(): number {
+  const now = Date.now()
+  // Ensure timestamp is always increasing
+  if (now <= lastTimestamp) {
+    lastTimestamp++
+    return lastTimestamp
+  }
+  lastTimestamp = now
+  return now
+}
+
+// Build cancellation reasons array for transaction failure
+export function buildCancellationReasons(
+  total: number,
+  failedIndex: number,
+  failedReason: CancellationReason
+): CancellationReason[] {
+  const reasons: CancellationReason[] = []
+  for (let i = 0; i < total; i++) {
+    if (i === failedIndex) {
+      reasons.push(failedReason)
+    } else {
+      reasons.push({ Code: 'None' })
+    }
+  }
+  return reasons
+}
+
 export class TransactionCoordinator {
   private db: Database
   private idempotencyCache = new Map<string, IdempotencyCacheEntry>()
   private readonly CACHE_TTL_MS = 10 * 60 * 1000 // 10 minutes
 
   constructor(dataDir: string) {
-    // Create data directory if it doesn't exist
     if (!fs.existsSync(dataDir)) {
       fs.mkdirSync(dataDir, { recursive: true })
     }
@@ -65,6 +95,7 @@ export class TransactionCoordinator {
       ON transaction_ledger(completed_at)
     `)
 
+    // TODO: move to alarm
     // Periodically clean up old transactions and cache
     setInterval(() => this.cleanup(), 60 * 1000) // Every minute
   }
@@ -80,7 +111,7 @@ export class TransactionCoordinator {
     if (!items || items.length === 0) {
       throw new Error('TransactItems cannot be empty')
     }
-    if (items.length > 100) {
+    if (items.length > MAX_ITEMS_PER_TRANSACTION) {
       throw new Error('Transaction cannot contain more than 100 items')
     }
 
@@ -166,10 +197,12 @@ export class TransactionCoordinator {
         // RELEASE: Clean up locks on all shards
         await this.releaseAllShards(shardOperations, shards, transactionId)
 
-        throw new TransactionCancelledError(
-          'Transaction cancelled, please refer cancellation reasons for specific reasons',
-          cancellationReasons
-        )
+        throw new TransactionCanceledException({
+          $metadata: {},
+          message:
+            'Transaction cancelled, please refer cancellation reasons for specific reasons',
+          CancellationReasons: cancellationReasons,
+        })
       }
 
       // All shards accepted - proceed to Phase 2
@@ -195,8 +228,8 @@ export class TransactionCoordinator {
         })
       }
     } catch (error: unknown) {
-      // If error is TransactionCancelledError, it's already handled
-      if (error instanceof TransactionCancelledError) {
+      // If error is TransactionCanceledException, it's already handled
+      if (error instanceof TransactionCanceledException) {
         throw error
       }
 
@@ -238,9 +271,19 @@ export class TransactionCoordinator {
     const results: Array<DynamoDBItem | null> = []
 
     for (const item of items) {
+      if (!item.Get) {
+        throw { name: 'ValidationException', message: 'Get is required' }
+      }
+      if (item.Get?.Key === undefined || item.Get.TableName === undefined) {
+        throw {
+          name: 'ValidationException',
+          message: 'Get requests require TableName and Key',
+        }
+      }
+
       const keyValues = metadataStore.extractKeyValuesFromKey(
-        item.tableName,
-        item.key
+        item.Get.TableName,
+        item.Get.Key
       )
       const shardIndex = getShardIndex(
         keyValues.partitionKeyValue,
@@ -253,7 +296,7 @@ export class TransactionCoordinator {
       }
 
       const dbItem = await shard.getItem(
-        item.tableName,
+        item.Get.TableName,
         keyValues.partitionKeyValue,
         keyValues.sortKeyValue
       )
@@ -261,11 +304,11 @@ export class TransactionCoordinator {
       if (dbItem) {
         // Apply projection expression if provided
         let resultItem = dbItem
-        if (item.projectionExpression) {
+        if (item.Get.ProjectionExpression !== undefined) {
           resultItem = this.applyProjection(
             dbItem,
-            item.projectionExpression,
-            item.expressionAttributeNames
+            item.Get.ProjectionExpression,
+            item.Get.ExpressionAttributeNames
           )
         }
         results.push(resultItem)
@@ -312,43 +355,43 @@ export class TransactionCoordinator {
 
       if (item.Put) {
         operation = 'Put'
-        tableName = item.Put.tableName
-        key = metadataStore.extractKey(tableName, item.Put.item)
-        itemData = item.Put.item
-        conditionExpression = item.Put.conditionExpression
-        expressionAttributeNames = item.Put.expressionAttributeNames
-        expressionAttributeValues = item.Put.expressionAttributeValues
+        tableName = item.Put.TableName!
+        key = metadataStore.extractKey(tableName, item.Put.Item!)
+        itemData = item.Put.Item
+        conditionExpression = item.Put.ConditionExpression
+        expressionAttributeNames = item.Put.ExpressionAttributeNames
+        expressionAttributeValues = item.Put.ExpressionAttributeValues
         returnValuesOnConditionCheckFailure =
-          item.Put.returnValuesOnConditionCheckFailure
+          item.Put.ReturnValuesOnConditionCheckFailure
       } else if (item.Update) {
         operation = 'Update'
-        tableName = item.Update.tableName
-        key = item.Update.key
-        updateExpression = item.Update.updateExpression
-        conditionExpression = item.Update.conditionExpression
-        expressionAttributeNames = item.Update.expressionAttributeNames
-        expressionAttributeValues = item.Update.expressionAttributeValues
+        tableName = item.Update.TableName!
+        key = item.Update.Key!
+        updateExpression = item.Update.UpdateExpression
+        conditionExpression = item.Update.ConditionExpression
+        expressionAttributeNames = item.Update.ExpressionAttributeNames
+        expressionAttributeValues = item.Update.ExpressionAttributeValues
         returnValuesOnConditionCheckFailure =
-          item.Update.returnValuesOnConditionCheckFailure
+          item.Update.ReturnValuesOnConditionCheckFailure
       } else if (item.Delete) {
         operation = 'Delete'
-        tableName = item.Delete.tableName
-        key = item.Delete.key
-        conditionExpression = item.Delete.conditionExpression
-        expressionAttributeNames = item.Delete.expressionAttributeNames
-        expressionAttributeValues = item.Delete.expressionAttributeValues
+        tableName = item.Delete.TableName!
+        key = item.Delete.Key!
+        conditionExpression = item.Delete.ConditionExpression
+        expressionAttributeNames = item.Delete.ExpressionAttributeNames
+        expressionAttributeValues = item.Delete.ExpressionAttributeValues
         returnValuesOnConditionCheckFailure =
-          item.Delete.returnValuesOnConditionCheckFailure
+          item.Delete.ReturnValuesOnConditionCheckFailure
       } else if (item.ConditionCheck) {
         operation = 'ConditionCheck'
-        tableName = item.ConditionCheck.tableName
-        key = item.ConditionCheck.key
-        conditionExpression = item.ConditionCheck.conditionExpression
-        expressionAttributeNames = item.ConditionCheck.expressionAttributeNames
+        tableName = item.ConditionCheck.TableName!
+        key = item.ConditionCheck.Key!
+        conditionExpression = item.ConditionCheck.ConditionExpression
+        expressionAttributeNames = item.ConditionCheck.ExpressionAttributeNames
         expressionAttributeValues =
-          item.ConditionCheck.expressionAttributeValues
+          item.ConditionCheck.ExpressionAttributeValues
         returnValuesOnConditionCheckFailure =
-          item.ConditionCheck.returnValuesOnConditionCheckFailure
+          item.ConditionCheck.ReturnValuesOnConditionCheckFailure
       } else {
         throw new Error('Invalid transaction item')
       }
@@ -464,7 +507,7 @@ export class TransactionCoordinator {
     shardIndex: number,
     error: Error
   ): void {
-    // Log for now - in production would write to recovery queue
+    // TODO: revisit with DOs, make sure progres is halted before we continue.
     console.error(
       `CRITICAL: Transaction ${transactionId} failed to commit on shard ${shardIndex}. ` +
         `This requires manual intervention or automated recovery. Error: ${error.message}`
@@ -606,11 +649,6 @@ export class TransactionCoordinator {
   }
 
   // Helper methods
-
-  private getKeyString(key: DynamoDBItem): string {
-    const keyAttrs = Object.keys(key).sort()
-    return keyAttrs.map((attr) => JSON.stringify(key[attr])).join('#')
-  }
 
   private applyProjection(
     item: DynamoDBItem,

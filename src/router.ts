@@ -3,8 +3,6 @@
 
 import type {
   DynamoDBItem,
-  TransactWriteItem,
-  TransactGetItem,
   QueryRequest,
   QueryResponse,
   TableSchema,
@@ -12,6 +10,8 @@ import type {
 import type {
   AttributeDefinition,
   KeySchemaElement,
+  TransactGetItem,
+  TransactWriteItem,
 } from '@aws-sdk/client-dynamodb'
 import type { Shard } from './shard.ts'
 import type { MetadataStore } from './metadata-store.ts'
@@ -19,56 +19,43 @@ import type { TransactionCoordinator } from './coordinator.ts'
 import { getShardIndex } from './hash-utils.ts'
 
 export class Router {
-  private shards: Shard[]
-  private metadataStore: MetadataStore
-  private coordinator: TransactionCoordinator
+  #shards: Shard[]
+  #coordinator: TransactionCoordinator
+  #metadataStore: MetadataStore
 
   constructor(
     shards: Shard[],
     metadataStore: MetadataStore,
     coordinator: TransactionCoordinator
   ) {
-    this.shards = shards
-    this.metadataStore = metadataStore
-    this.coordinator = coordinator
+    this.#shards = shards
+    this.#coordinator = coordinator
+    this.#metadataStore = metadataStore
   }
 
   // Table operations - route to metadata store
 
-  async createTable(
-    tableName: string,
-    keySchema: KeySchemaElement[],
+  async createTable({
+    tableName,
+    keySchema,
+    attributeDefinitions,
+  }: {
+    tableName: string
+    keySchema: KeySchemaElement[]
     attributeDefinitions: AttributeDefinition[]
-  ): Promise<void> {
-    await this.metadataStore.createTable({
-      tableName,
-      keySchema,
-      attributeDefinitions,
-    })
-  }
+  }): Promise<void> {}
 
-  async describeTable(tableName: string) {
-    return await this.metadataStore.describeTable(tableName)
-  }
-
-  async listTables(): Promise<string[]> {
-    return await this.metadataStore.listTables()
-  }
-
-  async deleteTable(tableName: string): Promise<void> {
-    // Delete from metadata
-    await this.metadataStore.deleteTable(tableName)
-
+  async deleteAllTableItems(tableName: string): Promise<void> {
     // Delete from all shards
     await Promise.all(
-      this.shards.map((shard) => shard.deleteAllTableItems(tableName))
+      this.#shards.map((shard) => shard.deleteAllTableItems(tableName))
     )
   }
 
   async getTableItemCount(tableName: string): Promise<number> {
     // Fan out to all shards and sum
     const counts = await Promise.all(
-      this.shards.map((shard) => shard.getItemCount(tableName))
+      this.#shards.map((shard) => shard.getItemCount(tableName))
     )
     return counts.reduce((sum, count) => sum + count, 0)
   }
@@ -108,7 +95,7 @@ export class Router {
   // Scan/Query operations - fan out to all shards
 
   async scan(
-    tableName: string,
+    schema: TableSchema,
     limit?: number,
     exclusiveStartKey?: DynamoDBItem
   ): Promise<{
@@ -117,25 +104,21 @@ export class Router {
   }> {
     // Fan out to all shards in parallel
     const shardResults = await Promise.all(
-      this.shards.map((shard) => shard.scanTable(tableName))
+      this.#shards.map((shard) => shard.scanTable(schema.tableName))
     )
-
     // Flatten results
     let allItems = shardResults.flat()
 
     // Handle pagination (simplified)
     if (exclusiveStartKey) {
-      const schema = await this.metadataStore.describeTable(tableName)
-      if (schema) {
-        const startKeyValue = this.getKeyString(exclusiveStartKey)
-        const startIndex = allItems.findIndex((item: DynamoDBItem) => {
-          const itemKey = this.extractKey(schema.keySchema, item)
-          const itemKeyString = this.getKeyString(itemKey)
-          return itemKeyString === startKeyValue
-        })
-        if (startIndex >= 0) {
-          allItems = allItems.slice(startIndex + 1)
-        }
+      const startKeyValue = this.getKeyString(exclusiveStartKey)
+      const startIndex = allItems.findIndex((item: DynamoDBItem) => {
+        const itemKey = this.extractKey(schema.keySchema, item)
+        const itemKeyString = this.getKeyString(itemKey)
+        return itemKeyString === startKeyValue
+      })
+      if (startIndex >= 0) {
+        allItems = allItems.slice(startIndex + 1)
       }
     }
 
@@ -145,10 +128,7 @@ export class Router {
       const limitedItems = allItems.slice(0, limit)
       const lastItem = limitedItems[limitedItems.length - 1]
       if (lastItem) {
-        const schema = await this.metadataStore.describeTable(tableName)
-        if (schema) {
-          lastEvaluatedKey = this.extractKey(schema.keySchema, lastItem)
-        }
+        lastEvaluatedKey = this.extractKey(schema.keySchema, lastItem)
       }
       allItems = limitedItems
     }
@@ -160,7 +140,7 @@ export class Router {
   }
 
   async query(
-    tableName: string,
+    schema: TableSchema,
     keyCondition: (item: DynamoDBItem) => boolean,
     limit?: number,
     exclusiveStartKey?: DynamoDBItem
@@ -169,8 +149,8 @@ export class Router {
     lastEvaluatedKey?: DynamoDBItem
   }> {
     // For simplicity, scan all shards and filter
-    // In production, we'd optimize to only query relevant shards based on partition key
-    const scanResult = await this.scan(tableName, undefined, exclusiveStartKey)
+    // TODO: optimize to only query relevant shards based on partition key
+    const scanResult = await this.scan(schema, undefined, exclusiveStartKey)
     let items = scanResult.items.filter(keyCondition)
 
     // Apply limit
@@ -179,10 +159,7 @@ export class Router {
       const limitedItems = items.slice(0, limit)
       const lastItem = limitedItems[limitedItems.length - 1]
       if (lastItem) {
-        const schema = await this.metadataStore.describeTable(tableName)
-        if (schema) {
-          lastEvaluatedKey = this.extractKey(schema.keySchema, lastItem)
-        }
+        lastEvaluatedKey = this.extractKey(schema.keySchema, lastItem)
       }
       items = limitedItems
     }
@@ -198,9 +175,9 @@ export class Router {
     // Route to the appropriate shard based on partition key
     const shardIndex = getShardIndex(
       request.partitionKeyValue,
-      this.shards.length
+      this.#shards.length
     )
-    const shard = this.shards[shardIndex]
+    const shard = this.#shards[shardIndex]
 
     if (!shard) {
       throw new Error(`Shard ${shardIndex} not found`)
@@ -247,7 +224,7 @@ export class Router {
     // Fetch from each shard in parallel
     const results = await Promise.all(
       Array.from(keysByShard.entries()).map(async ([shardIndex, items]) => {
-        const shard = this.shards[shardIndex]
+        const shard = this.#shards[shardIndex]
         if (!shard) return []
 
         const shardResults = await Promise.all(
@@ -316,7 +293,7 @@ export class Router {
 
     await Promise.all(
       Array.from(allShardIndexes).map(async (shardIndex) => {
-        const shard = this.shards[shardIndex]
+        const shard = this.#shards[shardIndex]
         if (!shard) return
 
         const puts = putsByShard.get(shardIndex) || []
@@ -353,35 +330,73 @@ export class Router {
       let key: DynamoDBItem
 
       if (item.Put) {
-        tableName = item.Put.tableName
-        key = this.metadataStore.extractKey(tableName, item.Put.item)
+        if (!item.Put.TableName || !item.Put.Item) {
+          throw {
+            name: 'ValidationException',
+            message: 'Put requests require TableName and Item',
+          }
+        }
+        tableName = item.Put.TableName
+        key = this.#metadataStore.extractKey(tableName, item.Put.Item)
       } else if (item.Update) {
-        tableName = item.Update.tableName
-        key = item.Update.key
+        if (
+          !item.Update.TableName ||
+          !item.Update.Key ||
+          !item.Update.UpdateExpression
+        ) {
+          throw {
+            name: 'ValidationException',
+            message:
+              'Update requests require TableName, Key, and UpdateExpression',
+          }
+        }
+
+        tableName = item.Update.TableName
+        key = item.Update.Key
       } else if (item.Delete) {
-        tableName = item.Delete.tableName
-        key = item.Delete.key
+        if (!item.Delete.TableName || !item.Delete.Key) {
+          throw {
+            name: 'ValidationException',
+            message: 'Delete requests require TableName and Key',
+          }
+        }
+        tableName = item.Delete.TableName
+        key = item.Delete.Key
       } else if (item.ConditionCheck) {
-        tableName = item.ConditionCheck.tableName
-        key = item.ConditionCheck.key
+        if (
+          !item.ConditionCheck.TableName ||
+          !item.ConditionCheck.Key ||
+          !item.ConditionCheck.ConditionExpression
+        ) {
+          throw {
+            name: 'ValidationException',
+            message:
+              'ConditionCheck requests require TableName, Key, and ConditionExpression',
+          }
+        }
+        tableName = item.ConditionCheck.TableName
+        key = item.ConditionCheck.Key
       } else {
-        throw new Error('Invalid transaction item')
+        throw {
+          name: 'ValidationException',
+          message: 'Invalid transaction item',
+        }
       }
 
-      const partitionKey = this.metadataStore.getPartitionKeyValue(
+      const partitionKey = this.#metadataStore.getPartitionKeyValue(
         tableName,
         key
       )
-      const shardIndex = getShardIndex(partitionKey, this.shards.length)
+      const shardIndex = getShardIndex(partitionKey, this.#shards.length)
       shardIndexes.add(shardIndex)
     }
 
     // TODO: Implement single-partition optimization
     // For now, always use coordinator
-    await this.coordinator.transactWrite(
+    await this.#coordinator.transactWrite(
       items,
-      this.shards,
-      this.metadataStore,
+      this.#shards,
+      this.#metadataStore,
       clientRequestToken
     )
   }
@@ -389,10 +404,10 @@ export class Router {
   async transactGet(
     items: TransactGetItem[]
   ): Promise<Array<DynamoDBItem | null>> {
-    return await this.coordinator.transactGet(
+    return await this.#coordinator.transactGet(
       items,
-      this.shards,
-      this.metadataStore
+      this.#shards,
+      this.#metadataStore
     )
   }
 
@@ -408,18 +423,18 @@ export class Router {
     partitionKeyValue: string
     sortKeyValue: string
   }> {
-    const keyValues = this.metadataStore.extractKeyValues(tableName, item)
+    const keyValues = this.#metadataStore.extractKeyValues(tableName, item)
     const shardIndex = getShardIndex(
       keyValues.partitionKeyValue,
-      this.shards.length
+      this.#shards.length
     )
-    const shard = this.shards[shardIndex]
+    const shard = this.#shards[shardIndex]
 
     if (!shard) {
       throw new Error(`Shard ${shardIndex} not found`)
     }
 
-    const key = this.metadataStore.extractKey(tableName, item)
+    const key = this.#metadataStore.extractKey(tableName, item)
     const keyString = this.getKeyString(key)
 
     return {

@@ -1,11 +1,21 @@
 import readline from 'node:readline'
 import { stdin, stdout, stderr } from 'node:process'
 import path from 'node:path'
+import fs from 'node:fs/promises'
 
-import type { AttributeValue } from '@aws-sdk/client-dynamodb'
-import { ShardedSQLiteStorage } from '../storage-sqlite.ts'
-import type { DynamoDBItem, TransactWriteItem } from '../storage.ts'
-import { TransactionCancelledError } from '../storage.ts'
+import {
+  DynamoDBClient,
+  CreateTableCommand,
+  DescribeTableCommand,
+  GetItemCommand,
+  PutItemCommand,
+  TransactWriteItemsCommand,
+  TransactionCanceledException,
+  type AttributeValue,
+  type TransactWriteItem,
+} from '@aws-sdk/client-dynamodb'
+import { DB } from '../../src/index.ts'
+import { createConfig } from '../../src/config.ts'
 
 type MaelstromMessage = {
   src: string
@@ -38,24 +48,40 @@ const dataRoot =
 const nodeDataDir = path.join(dataRoot, `node-${process.pid}`)
 const shardCount = parseInt(process.env.MAELSTROM_SHARD_COUNT ?? '1', 10)
 
-const storage = new ShardedSQLiteStorage({
-  shardCount,
-  dataDir: nodeDataDir,
+const db = new DB(
+  createConfig({
+    shardCount,
+    dataDir: nodeDataDir,
+    port: 0,
+  })
+)
+const endpoint = `http://127.0.0.1:${db.server.port}`
+const client = new DynamoDBClient({
+  endpoint,
+  region: 'local',
+  credentials: { accessKeyId: 'test', secretAccessKey: 'test' },
 })
 
 let tableReady: Promise<void> | null = null
 async function ensureTableExists() {
   if (!tableReady) {
     tableReady = (async () => {
-      const existing = await storage.describeTable(TABLE_NAME)
-      if (!existing) {
-        await storage.createTable({
-          tableName: TABLE_NAME,
-          keySchema: [{ AttributeName: KEY_ATTR, KeyType: 'HASH' }],
-          attributeDefinitions: [
-            { AttributeName: KEY_ATTR, AttributeType: 'S' },
-          ],
-        })
+      try {
+        await client.send(new DescribeTableCommand({ TableName: TABLE_NAME }))
+      } catch (error) {
+        if ((error as { name?: string }).name !== 'ResourceNotFoundException') {
+          throw error
+        }
+        await client.send(
+          new CreateTableCommand({
+            TableName: TABLE_NAME,
+            KeySchema: [{ AttributeName: KEY_ATTR, KeyType: 'HASH' }],
+            AttributeDefinitions: [
+              { AttributeName: KEY_ATTR, AttributeType: 'S' },
+            ],
+            BillingMode: 'PAY_PER_REQUEST',
+          })
+        )
       }
     })()
   }
@@ -95,7 +121,8 @@ rl.on('close', () => {
       )
     })
     .finally(() => {
-      storage.close()
+      db.server.stop().catch(() => {})
+      fs.rm(nodeDataDir, { recursive: true, force: true }).catch(() => {})
       process.exit(0)
     })
 })
@@ -141,14 +168,20 @@ async function handleRead(message: MaelstromMessage) {
   await ensureTableExists()
   const { key, msg_id } = message.body
   const keyItem = buildKeyItem(key)
-  const item = await storage.getItem(TABLE_NAME, keyItem)
-  if (!item || !item[VALUE_ATTR]) {
+  const response = await client.send(
+    new GetItemCommand({
+      TableName: TABLE_NAME,
+      Key: keyItem,
+      ConsistentRead: true,
+    })
+  )
+  if (!response.Item || !response.Item[VALUE_ATTR]) {
     sendError(message, 20, 'key does not exist')
     return
   }
   reply(message, {
     type: 'read_ok',
-    value: decodeValue(item[VALUE_ATTR]),
+    value: decodeValue(response.Item[VALUE_ATTR]!),
     in_reply_to: msg_id,
   })
 }
@@ -164,7 +197,12 @@ async function handleWrite(message: MaelstromMessage) {
     sendError(message, 12, 'write requires value')
     return
   }
-  await storage.putItem(TABLE_NAME, buildFullItem(key, value))
+  await client.send(
+    new PutItemCommand({
+      TableName: TABLE_NAME,
+      Item: buildFullItem(key, value),
+    })
+  )
   reply(message, { type: 'write_ok' })
 }
 
@@ -187,23 +225,23 @@ async function handleCas(message: MaelstromMessage) {
   const items: TransactWriteItem[] = [
     {
       ConditionCheck: {
-        tableName: TABLE_NAME,
-        key: keyAttr,
-        conditionExpression: '#v = :expected',
-        expressionAttributeNames: conditionNames,
-        expressionAttributeValues: {
+        TableName: TABLE_NAME,
+        Key: keyAttr,
+        ConditionExpression: '#v = :expected',
+        ExpressionAttributeNames: conditionNames,
+        ExpressionAttributeValues: {
           ':expected': fromAttr,
         },
-        returnValuesOnConditionCheckFailure: 'ALL_OLD',
+        ReturnValuesOnConditionCheckFailure: 'ALL_OLD',
       },
     },
     {
       Update: {
-        tableName: TABLE_NAME,
-        key: keyAttr,
-        updateExpression: 'SET #v = :next',
-        expressionAttributeNames: conditionNames,
-        expressionAttributeValues: {
+        TableName: TABLE_NAME,
+        Key: keyAttr,
+        UpdateExpression: 'SET #v = :next',
+        ExpressionAttributeNames: conditionNames,
+        ExpressionAttributeValues: {
           ':next': toAttr,
         },
       },
@@ -211,11 +249,15 @@ async function handleCas(message: MaelstromMessage) {
   ]
 
   try {
-    await storage.transactWrite(items)
+    await client.send(
+      new TransactWriteItemsCommand({
+        TransactItems: items,
+      })
+    )
     reply(message, { type: 'cas_ok' })
   } catch (error) {
-    if (error instanceof TransactionCancelledError) {
-      const reason = error.cancellationReasons?.find((r) => r.Code !== 'None')
+    if (error instanceof TransactionCanceledException) {
+      const reason = error.CancellationReasons?.find((r) => r.Code !== 'None')
       if (reason?.Code === 'ConditionalCheckFailed') {
         if (!reason.Item || !reason.Item[VALUE_ATTR]) {
           sendError(message, 20, 'key does not exist')
@@ -258,13 +300,16 @@ function send(message: OutboundMessage) {
   stdout.write(`${JSON.stringify(message)}\n`)
 }
 
-function buildKeyItem(key: unknown): DynamoDBItem {
+function buildKeyItem(key: unknown): Record<string, AttributeValue> {
   return {
     [KEY_ATTR]: { S: keyToString(key) },
   }
 }
 
-function buildFullItem(key: unknown, value: unknown): DynamoDBItem {
+function buildFullItem(
+  key: unknown,
+  value: unknown
+): Record<string, AttributeValue> {
   return {
     ...buildKeyItem(key),
     [VALUE_ATTR]: encodeValue(value),
