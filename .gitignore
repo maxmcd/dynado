@@ -32,4 +32,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 
 /data
+/store
 /test-data
+.maelstrom-data

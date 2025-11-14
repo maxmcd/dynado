@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Run the lin-kv.ts file from the correct location
+bun run "$SCRIPT_DIR/lin-kv.ts"
